@@ -9,7 +9,6 @@ declare(strict_types=1);
 namespace Besnovatyj\File\storage;
 
 use Besnovatyj\File\services\FileManagerService;
-use SplFileInfo;
 
 /**
  * Фасад слоя хранилищ — единственная точка входа для контроллёров файлового менеджера.
@@ -59,21 +58,20 @@ final class StorageManager
      */
     public function virtualRootDto(): array
     {
+        // Метаданные синтетические: у виртуального корня и адаптеров (S3/ZIP) нет POSIX-прав/времени.
+        // Значения положительные — этого достаточно фронтенду (FolderMeta).
+        $now = time();
+        $meta = ['permissions' => 0755, 'mTime' => $now, 'aTime' => $now, 'size' => 0];
+
         $folders = [];
         foreach ($this->registry->all() as $mount) {
-            $spl = new SplFileInfo($mount->path('')); // абсолютный корень точки монтирования
             $folders[] = [
                 'name' => $mount->id,   // имя = id ⇒ ключ '/{id}' на фронтенде
                 'path' => '',           // родитель — виртуальный корень
                 'type' => 'dir',
                 'countChildDirs' => 0,
                 'countChildFiles' => 0,
-                'meta' => [
-                    'permissions' => $spl->getPerms(),
-                    'mTime' => $spl->getMTime(),
-                    'aTime' => $spl->getATime(),
-                    'size' => 0,
-                ],
+                'meta' => $meta,
                 'folders' => [],
                 'files' => [],
             ];
@@ -85,12 +83,7 @@ final class StorageManager
             'type' => 'dir',
             'countChildDirs' => count($folders),
             'countChildFiles' => 0,
-            'meta' => [
-                'permissions' => 0,
-                'mTime' => time(),
-                'aTime' => time(),
-                'size' => 0,
-            ],
+            'meta' => $meta,
             'folders' => $folders,
             'files' => [],
         ];
