@@ -316,9 +316,9 @@ extraction от ошибок новой реализации.
 
 ## Приоритетный план доведения до готовности
 
-1. Исправить генерацию и публикацию `.d.ts` во всех трёх npm-пакетах.
-2. Убрать `file:../../npm/filemanager-core` из публикуемого манифеста.
-3. Выровнять CKEditor на одной major/minor линии и пересобрать оба плагина.
+1. ✅ Исправить генерацию и публикацию `.d.ts` во всех трёх npm-пакетах.
+2. ✅ Убрать `file:../../npm/filemanager-core` из публикуемого манифеста.
+3. ✅ Выровнять CKEditor на одной major/minor линии и пересобрать оба плагина.
 4. Синхронизировать `rename`, `upload`, `move`, delete error items и прочие DTO между PHP и TypeScript.
 5. Исправить lifecycle listeners и убрать доступ к private `bus`.
 6. Добавить contract tests backend API и consumer typecheck из tarball.
