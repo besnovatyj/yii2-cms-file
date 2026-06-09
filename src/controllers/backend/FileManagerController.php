@@ -6,6 +6,9 @@
 
 namespace Besnovatyj\File\controllers\backend;
 
+use Besnovatyj\File\services\FileManagerService;
+use Besnovatyj\File\storage\exceptions\PathTraversalException;
+use Besnovatyj\File\storage\exceptions\UnknownMountException;
 use Besnovatyj\File\storage\StorageManager;
 use Besnovatyj\File\storage\VirtualPath;
 use Throwable;
@@ -13,6 +16,7 @@ use Yii;
 use yii\web\Controller;
 use yii\web\Response;
 use yii\web\BadRequestHttpException;
+use yii\web\NotFoundHttpException;
 use yii\web\ServerErrorHttpException;
 
 /**
@@ -47,9 +51,37 @@ class FileManagerController extends Controller
     }
 
     /**
+     * Разбирает виртуальный путь из параметров запроса.
+     * Некорректный путь (traversal `..`, NUL-байт, обратный слеш) — ошибка КЛИЕНТА: 400, а не 500.
+     * @throws BadRequestHttpException
+     */
+    private function parsePath(string $raw): VirtualPath
+    {
+        try {
+            return VirtualPath::parse($raw);
+        } catch (PathTraversalException $e) {
+            throw new BadRequestHttpException($e->getMessage(), 0, $e);
+        }
+    }
+
+    /**
+     * Сервис файловых операций точки монтирования.
+     * Неизвестный mountId — клиент сослался на несуществующий «диск»: 404, а не 500.
+     * @throws NotFoundHttpException
+     */
+    private function serviceFor(?string $mountId): FileManagerService
+    {
+        try {
+            return $this->storage->serviceFor((string)$mountId);
+        } catch (UnknownMountException $e) {
+            throw new NotFoundHttpException($e->getMessage(), 0, $e);
+        }
+    }
+
+    /**
      * POST /file/file-manager/list
      * body: { "path": "/{mountId}/..." }   ('' или '/' — виртуальный корень: перечень точек монтирования)
-     * @throws BadRequestHttpException|ServerErrorHttpException
+     * @throws BadRequestHttpException|NotFoundHttpException|ServerErrorHttpException
      */
     public function actionList(): array
     {
@@ -58,14 +90,16 @@ class FileManagerController extends Controller
             throw new BadRequestHttpException('Path is required');
         }
 
-        try {
-            $vp = VirtualPath::parse((string)$path);
+        // Валидация запроса — ДО try: её ошибки клиентские (400/404), а не серверные.
+        $vp = $this->parsePath((string)$path);
+        $service = $vp->isRoot() ? null : $this->serviceFor($vp->mountId);
 
+        try {
             // Виртуальный корень — синтетический перечень точек монтирования как папок.
             // Иначе — содержимое директории внутри конкретной точки монтирования.
-            $item = $vp->isRoot()
+            $item = $service === null
                 ? $this->storage->virtualRootDto()
-                : $this->storage->serviceFor($vp->mountId)->getFolderDto($vp->relative);
+                : $service->getFolderDto($vp->relative);
 
             return [
                 'path' => $path,
@@ -82,7 +116,7 @@ class FileManagerController extends Controller
     /**
      * POST /file/file-manager/upload
      * multipart/form-data: path, files[]
-     * @throws BadRequestHttpException|ServerErrorHttpException
+     * @throws BadRequestHttpException|NotFoundHttpException|ServerErrorHttpException
      */
     public function actionUpload(): array
     {
@@ -91,14 +125,15 @@ class FileManagerController extends Controller
             throw new BadRequestHttpException('Path is required');
         }
 
-        try {
-            $vp = VirtualPath::parse((string)$path);
-            if ($vp->isRoot()) {
-                throw new BadRequestHttpException('Нельзя загружать в виртуальный корень — выберите точку монтирования.');
-            }
+        $vp = $this->parsePath((string)$path);
+        if ($vp->isRoot()) {
+            throw new BadRequestHttpException('Нельзя загружать в виртуальный корень — выберите точку монтирования.');
+        }
+        $service = $this->serviceFor($vp->mountId);
 
+        try {
             // FileManagerService сам берёт UploadedFile::getInstanceByName('file')
-            return $this->storage->serviceFor($vp->mountId)->uploadFile($vp->relative);
+            return $service->uploadFile($vp->relative);
         } catch (Throwable $e) {
             Yii::$app->errorHandler->logException($e);
             throw new ServerErrorHttpException($e->getMessage(), 0, $e);
@@ -108,7 +143,7 @@ class FileManagerController extends Controller
     /**
      * POST /file/file-manager/delete
      * body: { "paths": ["/{mountId}/a.png", "/{mountId}/b.png"] }
-     * @throws BadRequestHttpException|ServerErrorHttpException
+     * @throws BadRequestHttpException|NotFoundHttpException|ServerErrorHttpException
      */
     public function actionDelete(): array
     {
@@ -116,20 +151,27 @@ class FileManagerController extends Controller
         if (!is_array($paths) || !$paths) {
             throw new BadRequestHttpException('paths[] is required');
         }
-        try {
-            // Группируем по точке монтирования: каждый сервис работает строго в пределах своего mount.
-            $byMount = [];
-            foreach ($paths as $raw) {
-                $vp = VirtualPath::parse((string)$raw);
-                if ($vp->isRoot()) {
-                    throw new BadRequestHttpException('Нельзя удалять виртуальный корень.');
-                }
-                $byMount[$vp->mountId][] = $vp->relative;
-            }
 
+        // Группируем по точке монтирования: каждый сервис работает строго в пределах своего mount.
+        $byMount = [];
+        foreach ($paths as $raw) {
+            $vp = $this->parsePath((string)$raw);
+            if ($vp->isRoot()) {
+                throw new BadRequestHttpException('Нельзя удалять виртуальный корень.');
+            }
+            $byMount[$vp->mountId][] = $vp->relative;
+        }
+
+        // Сервисы резолвим заранее: неизвестный mount отклоняет ВЕСЬ батч (404) до первого удаления.
+        $services = [];
+        foreach (array_keys($byMount) as $mountId) {
+            $services[$mountId] = $this->serviceFor((string)$mountId);
+        }
+
+        try {
             $results = [];
             foreach ($byMount as $mountId => $relatives) {
-                $res = $this->storage->serviceFor($mountId)->deletePaths($relatives);
+                $res = $services[$mountId]->deletePaths($relatives);
                 foreach ($res['results'] as $r) {
                     $results[] = $r;
                 }
@@ -153,7 +195,7 @@ class FileManagerController extends Controller
     /**
      * POST /file/file-manager/mkdir
      * body: { "parentPath": "/{mountId}/blog", "name": "new-folder" }
-     * @throws BadRequestHttpException|ServerErrorHttpException
+     * @throws BadRequestHttpException|NotFoundHttpException|ServerErrorHttpException
      */
     public function actionMkdir(): array
     {
@@ -164,14 +206,15 @@ class FileManagerController extends Controller
             throw new BadRequestHttpException('parentPath and name are required');
         }
 
-        try {
-            $vp = VirtualPath::parse((string)$parentPath);
-            if ($vp->isRoot()) {
-                throw new BadRequestHttpException('Нельзя создавать папку в виртуальном корне — выберите точку монтирования.');
-            }
+        $vp = $this->parsePath((string)$parentPath);
+        if ($vp->isRoot()) {
+            throw new BadRequestHttpException('Нельзя создавать папку в виртуальном корне — выберите точку монтирования.');
+        }
+        $service = $this->serviceFor($vp->mountId);
 
+        try {
             // dto: FileDto для новой папки
-            return $this->storage->serviceFor($vp->mountId)->createDir($vp->relative, $name);
+            return $service->createDir($vp->relative, $name);
         } catch (Throwable $e) {
             Yii::$app->errorHandler->logException($e);
             throw new ServerErrorHttpException($e->getMessage(), 0, $e);
@@ -182,6 +225,7 @@ class FileManagerController extends Controller
      * POST /file/file-manager/rename
      * body: { "parentPath": "/{mountId}/blog", "oldName": "old.png", "newName": "new.png" }
      * @throws BadRequestHttpException
+     * @throws NotFoundHttpException
      * @throws ServerErrorHttpException
      */
     public function actionRename(): array
@@ -192,13 +236,15 @@ class FileManagerController extends Controller
         if (!$path || !$oldName || !$newName) {
             throw new BadRequestHttpException('path and newName are required');
         }
-        try {
-            $vp = VirtualPath::parse((string)$path);
-            if ($vp->isRoot()) {
-                throw new BadRequestHttpException('Нельзя переименовывать в виртуальном корне.');
-            }
 
-            return $this->storage->serviceFor($vp->mountId)->rename($vp->relative, $oldName, $newName); // FileDto
+        $vp = $this->parsePath((string)$path);
+        if ($vp->isRoot()) {
+            throw new BadRequestHttpException('Нельзя переименовывать в виртуальном корне.');
+        }
+        $service = $this->serviceFor($vp->mountId);
+
+        try {
+            return $service->rename($vp->relative, $oldName, $newName); // FileDto
         } catch (Throwable $e) {
             Yii::$app->errorHandler->logException($e);
             throw new ServerErrorHttpException($e->getMessage(), 0, $e);
@@ -208,7 +254,7 @@ class FileManagerController extends Controller
     /**
      * POST /file/file-manager/move
      * body: { "sourcePath": "/{mountId}/...", "targetPath": "/{mountId}/..." }
-     * @throws BadRequestHttpException|ServerErrorHttpException
+     * @throws BadRequestHttpException|NotFoundHttpException|ServerErrorHttpException
      */
     public function actionMove(): array
     {
@@ -219,19 +265,20 @@ class FileManagerController extends Controller
             throw new BadRequestHttpException('sourcePath and targetPath are required');
         }
 
-        try {
-            $source = VirtualPath::parse((string)$sourcePath);
-            $target = VirtualPath::parse((string)$targetPath);
-            if ($source->isRoot() || $target->isRoot()) {
-                throw new BadRequestHttpException('Виртуальный корень не может быть источником или целью перемещения.');
-            }
-            // Перемещение между разными точками монтирования (local↔S3↔FTP) — отдельная фича адаптеров,
-            // пока не поддерживаем (требует копирования между хранилищами, а не rename внутри одного).
-            if ($source->mountId !== $target->mountId) {
-                throw new BadRequestHttpException('Перемещение между разными хранилищами пока не поддерживается.');
-            }
+        $source = $this->parsePath((string)$sourcePath);
+        $target = $this->parsePath((string)$targetPath);
+        if ($source->isRoot() || $target->isRoot()) {
+            throw new BadRequestHttpException('Виртуальный корень не может быть источником или целью перемещения.');
+        }
+        // Перемещение между разными точками монтирования (local↔S3↔FTP) — отдельная фича адаптеров,
+        // пока не поддерживаем (требует копирования между хранилищами, а не rename внутри одного).
+        if ($source->mountId !== $target->mountId) {
+            throw new BadRequestHttpException('Перемещение между разными хранилищами пока не поддерживается.');
+        }
+        $service = $this->serviceFor($source->mountId);
 
-            $this->storage->serviceFor($source->mountId)->move($source->relative, $target->relative);
+        try {
+            $service->move($source->relative, $target->relative);
             return ['status' => 'ok'];
         } catch (Throwable $e) {
             Yii::$app->errorHandler->logException($e);
@@ -242,7 +289,7 @@ class FileManagerController extends Controller
     /**
      * POST /file/file-manager/analyze
      * body: { "path": "/{mountId}/origin/photo.jpg" }
-     * @throws BadRequestHttpException|ServerErrorHttpException
+     * @throws BadRequestHttpException|NotFoundHttpException|ServerErrorHttpException
      */
     public function actionAnalyze(): array
     {
@@ -252,14 +299,15 @@ class FileManagerController extends Controller
             throw new BadRequestHttpException('Path is required');
         }
 
-        try {
-            $vp = VirtualPath::parse((string)$path);
-            if ($vp->isRoot()) {
-                throw new BadRequestHttpException('Виртуальный корень не является файлом.');
-            }
+        $vp = $this->parsePath((string)$path);
+        if ($vp->isRoot()) {
+            throw new BadRequestHttpException('Виртуальный корень не является файлом.');
+        }
+        $service = $this->serviceFor($vp->mountId);
 
+        try {
             // Возвращает массив: ['mime' => '...', 'hexDump' => '...', ...]
-            return $this->storage->serviceFor($vp->mountId)->analyzeFile($vp->relative);
+            return $service->analyzeFile($vp->relative);
         } catch (Throwable $e) {
             Yii::$app->errorHandler->logException($e);
             throw new ServerErrorHttpException($e->getMessage(), 0, $e);
