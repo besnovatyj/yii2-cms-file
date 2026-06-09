@@ -333,10 +333,13 @@ PHP: `url` уже есть; `item` собрать через существую�
   слоистый `GetConfigResponse`+`BackendCapabilities` из §5.5, порт+реализация `getConfig`).
   `MoveService`/`RenameService` менять не пришлось — возвращаемые типы выводятся. Поведение фич
   не меняется (они потребляют подмножество).
-- **Шаг 7б** (`yii2-cms-file`): PHP наполняет контракты: `rename`-отчёт, `move`-отчёт с `item`,
-  `delete` — `type` во всех ветках + нейтральные per-item сообщения, `upload` — `item`,
-  `createDir` — полный `FileMetaDto`, `config` — `fileMaxSize: null`. Плюс `fileType`: заменить
-  плейсхолдер на честное значение (mime либо расширение — как в `rename()` сейчас).
+- ✅ **Шаг 7б** (`yii2-cms-file` + попутный релакс в core): PHP наполняет контракты — `rename`/
+  `move`-отчёты с `item` (общий хелпер `itemDto()`), `delete` — `type` во всех ветках +
+  нейтральные per-item сообщения (утечка закрыта), `upload` — `url|null` + `item`, `createDir` —
+  полный `FileMetaDto` (`dirFileMeta()`), конфиг — `StorageManager::configDto()` (слоистый,
+  `maxFileSize` из ini в байтах, `publicUrls: false` для mount без `baseUrl`), `fileType` в
+  листинге — расширение (mime был бы N+1 на S3). Попутно: `FileEntity.setUrl` ослаблен до
+  контракта `string|null` (валидатор противоречил собственному DTO — класс бага «path === ''»).
 - **Шаг 7в**: пересборка dist ядра и адаптера (вместе с хвостом шагов 4–6), прогон в браузере.
 
 ### 5.4 Мои (besnovatyj) замечания к принципу работы фронтэнда и планируемому функционалу
@@ -497,3 +500,20 @@ export interface BackendCapabilities {
   `HttpFileManagerBackend`; ленивая модель `countChild*` задокументирована в `DirDto`.
   До шага 7б фронт совместим со старым PHP-ответом: новые поля отчётов фичи пока не читают
   (используется только `res.path` у rename, существующий в обоих форматах).
+- **Шаг 7б** (`yii2-cms-file` + `npm/filemanager-core` `7a968fa`): PHP наполняет контракты шага 7а.
+  `FileManagerService`: `rename()`/`move()` возвращают операционные отчёты (`{ok, ..., item}`,
+  общий хелпер `itemDto()` — FileDto объекта по факту после операции); `uploadFile()` —
+  `url: string|null` + `item`; `createDir()` — полная meta (`dirFileMeta()`: FileMetaDto-форма
+  для папок, идущих как FileDto); `deletePaths()` — `type` во всех ветках (`'unknown'` для
+  несуществующих, определяется ДО удаления) и нейтральные per-item сообщения с логом вместо
+  сырого `FilesystemException::getMessage()` (закрыта утечка из §5.1); `fileType` в листинге —
+  расширение вместо TODO-плейсхолдера (точный MIME — в одиночных операциях; mimeType() на каждый
+  файл листинга был бы N+1 к S3); новый `publicUrl()` — `null` вместо битого относительного URL
+  при пустом `baseUrl` (zip-mount). `StorageManager::configDto()` — слоистый GetConfigResponse:
+  `contractVersion: 1`, `global.upload.maxFileSize` из ini (min от upload_max_filesize/
+  post_max_size, в байтах, `null` = без лимита), `allowedMimeTypes/Extensions: null` (контентные
+  ограничения осознанно отложены), `mounts.{id}.publicUrls: false` при пустом baseUrl;
+  `FileManagerService::getConfigDto()` удалён, контроллёр вызывает `storage->configDto()`.
+  Попутный релакс в core: `FileEntity.url: string|null`, `setUrl` принимает `null` и нормализует
+  `''` → `null` (валидатор противоречил собственному контракту FileDto.url; потребители
+  null-терпимы: `IconHelper`, `PropertiesFeature`, CKEditor-адаптер).

@@ -11,6 +11,7 @@ use DomainException;
 use League\Flysystem\FileAttributes;
 use League\Flysystem\Filesystem;
 use League\Flysystem\FilesystemException;
+use Yii;
 use yii\web\UploadedFile;
 
 /**
@@ -82,13 +83,17 @@ class FileManagerService
             $name = basename($item->path());
 
             if ($item instanceof FileAttributes) {
+                $extension = pathinfo($name, PATHINFO_EXTENSION);
                 $data['files'][] = [
                     'name' => $name,
                     'path' => $dirVirtual, // родитель ребёнка — текущая директория (виртуальный путь)
-                    'extension' => pathinfo($name, PATHINFO_EXTENSION),
+                    'extension' => $extension,
                     'type' => 'file',
-                    'fileType' => 'TODO - человекопонятный тип файла', // Вычисляемое
-                    'url' => $this->mount->url($item->path()),
+                    // В листинге человекочитаемый тип — из расширения: mimeType() на каждый файл
+                    // был бы N+1 запросом к адаптеру (особенно S3). Точный MIME отдают analyze
+                    // и одиночные операции (rename/move).
+                    'fileType' => $extension,
+                    'url' => $this->publicUrl($item->path()),
                     'meta' => $this->fileMeta($item->lastModified(), $item->fileSize(), $item->visibility()),
                 ];
             } else {
@@ -128,6 +133,8 @@ class FileManagerService
 
         $fs->createDirectory($newRel);
 
+        // Контракт createDir — FileDto (type='dir'), поэтому meta полная (FileMetaDto),
+        // а не сокращённая FolderMetaDto из листинга.
         return [
             'name' => $safeName,
             'path' => $this->mount->virtual($parentPath), // виртуальный путь родителя
@@ -135,13 +142,18 @@ class FileManagerService
             'type' => 'dir',
             'fileType' => 'directory',
             'url' => null,
-            'meta' => $this->dirMeta(),
+            'meta' => $this->dirFileMeta(),
         ];
     }
 
     // ======= MOVE =======
 
-    public function move(string $sourcePath, string $targetPath): bool
+    /**
+     * Перемещение объекта в директорию $targetPath.
+     * Возвращает операционный отчёт MoveResponse (контракт TS-first): фактическое состояние
+     * объекта на новом месте — фронтенд по нему валидирует и логирует операцию.
+     */
+    public function move(string $sourcePath, string $targetPath): array
     {
         $fs = $this->fs();
         $sourceRel = $this->fsPath($sourcePath);
@@ -160,7 +172,14 @@ class FileManagerService
         // Flysystem сам нормализует пути и запрещает обход каталога (..).
         $fs->move($sourceRel, $destRel);
 
-        return true;
+        $targetVirtual = $this->mount->virtual($targetPath);
+
+        return [
+            'ok' => true,
+            'sourcePath' => $this->mount->virtual($sourcePath),
+            'targetPath' => $targetVirtual,
+            'item' => $this->itemDto($destRel, $targetVirtual),
+        ];
     }
 
     // ======= UPLOAD =======
@@ -199,10 +218,16 @@ class FileManagerService
             }
         }
 
+        $dirVirtual = $this->mount->virtual($path);
+
+        // Отчёт UploadResponse: фактическое имя после санитизации + полные метаданные созданного
+        // файла (item) — фронтенд сможет валидировать/логировать и оптимистично класть файл
+        // в FolderRegistry без повторного list.
         return [
-            'path' => $this->mount->virtual($path),
+            'path' => $dirVirtual,
             'fileName' => $fileName,
-            'url' => $this->mount->url($targetRel),
+            'url' => $this->publicUrl($targetRel),
+            'item' => $this->itemDto($targetRel, $dirVirtual),
         ];
     }
 
@@ -216,18 +241,28 @@ class FileManagerService
         foreach ($paths as $path) {
             $rel = $this->fsPath((string)$path);
             $virtual = $this->mount->virtual((string)$path);
+
+            // Тип определяем ДО удаления (после — уже не узнать): контракт DeleteResponseDto
+            // требует type во ВСЕХ ветках; 'unknown' — путь не существует/неопределим.
+            $isFile = $fs->fileExists($rel);
+            $isDir = !$isFile && $fs->directoryExists($rel);
+            $type = $isFile ? 'file' : ($isDir ? 'folder' : 'unknown');
+
             try {
-                if ($fs->fileExists($rel)) {
+                if ($isFile) {
                     $fs->delete($rel);
                     $results[] = ['path' => $virtual, 'ok' => true, 'message' => 'Файл успешно удалён', 'type' => 'file'];
-                } elseif ($fs->directoryExists($rel)) {
+                } elseif ($isDir) {
                     $fs->deleteDirectory($rel);
                     $results[] = ['path' => $virtual, 'ok' => true, 'message' => 'Директория успешно удалена', 'type' => 'folder'];
                 } else {
-                    $results[] = ['path' => $virtual, 'ok' => false, 'message' => 'Ошибка: путь не является файлом или директорией, или не существует.'];
+                    $results[] = ['path' => $virtual, 'ok' => false, 'message' => 'Ошибка: путь не является файлом или директорией, или не существует.', 'type' => 'unknown'];
                 }
             } catch (FilesystemException $e) {
-                $results[] = ['path' => $virtual, 'ok' => false, 'message' => 'Ошибка удаления: ' . $e->getMessage()];
+                // Per-item ошибки уходят клиенту внутри HTTP 200 — та же дисциплина, что
+                // error mapping контроллёра: наружу нейтрально, детали (сообщение адаптера) в лог.
+                Yii::error('Ошибка удаления ' . $virtual . ': ' . $e, __METHOD__);
+                $results[] = ['path' => $virtual, 'ok' => false, 'message' => 'Внутренняя ошибка при удалении.', 'type' => $type];
             }
         }
 
@@ -243,6 +278,11 @@ class FileManagerService
 
     // ======= RENAME =======
 
+    /**
+     * Переименование объекта внутри директории $path.
+     * Возвращает операционный отчёт RenameResponse (контракт TS-first): фактическое имя после
+     * санитизации (может отличаться от запрошенного!) и состояние объекта после операции.
+     */
     public function rename(string $path, string $oldName, string $newName): array
     {
         // oldName — ИМЯ внутри $path, а не путь: запрещаем разделители и спецсегменты, иначе клиент
@@ -271,36 +311,12 @@ class FileManagerService
 
         $virtualDir = $this->mount->virtual($path);
 
-        // если это директория — вернём в формате FileDto как "directory"
-        if ($isDir) {
-            return [
-                'name' => $safeNewName,
-                'path' => $virtualDir,
-                'extension' => null,
-                'type' => 'dir',
-                'fileType' => 'directory',
-                'url' => null,
-                'meta' => $this->dirMeta(),
-            ];
-        }
-
-        // иначе — файл
-        $extension = pathinfo($safeNewName, PATHINFO_EXTENSION);
-        $mime = null;
-        try {
-            $mime = $fs->mimeType($newRel);
-        } catch (FilesystemException) {
-            // тип не определился — не критично
-        }
-
         return [
-            'name' => $safeNewName,
+            'ok' => true,
             'path' => $virtualDir,
-            'extension' => $extension,
-            'type' => 'file',
-            'fileType' => $mime ?: $extension,
-            'url' => $this->mount->url($newRel),
-            'meta' => $this->fileMetaFor($fs, $newRel),
+            'oldName' => $oldName,
+            'newName' => $safeNewName,
+            'item' => $this->itemDto($newRel, $virtualDir),
         ];
     }
 
@@ -341,21 +357,8 @@ class FileManagerService
         ];
     }
 
-    // ======= CONFIG =======
-
-    public function getConfigDto(): array
-    {
-        return [
-            'fileMaxSize' => '',
-            'allowedMimeTypes' => [
-                // TODO in js: `<input type="file" id="fileInput" accept="image/*" />`
-                // TODO in js: `if (file && file.type.startsWith('image/')) {}`
-                'image/*',
-                'image/jpeg',
-                'image/png',
-            ],
-        ];
-    }
+    // Конфиг/возможности бэкенда собирает StorageManager::configDto() — он знает обо ВСЕХ
+    // точках монтирования (контракт GetConfigResponse: global + переопределения по mount).
 
     /**
      * TODO - Заглушка, реализовать
@@ -371,6 +374,59 @@ class FileManagerService
     }
 
     // ======= ХЕЛПЕРЫ =======
+
+    /**
+     * Публичный URL файла либо null, если у точки монтирования нет публичной отдачи
+     * (пустой baseUrl, например ZIP-mount без download-эндпоинта).
+     * Контракт FileDto.url: string|null — null честнее битого относительного URL.
+     */
+    private function publicUrl(string $rel): ?string
+    {
+        return $this->mount->baseUrl === '' ? null : $this->mount->url($rel);
+    }
+
+    /**
+     * FileDto объекта (файла или директории) по его относительному пути — для операционных
+     * отчётов (rename/move/upload): фронтенд валидирует и логирует операцию по фактическому
+     * состоянию объекта после неё.
+     */
+    private function itemDto(string $rel, string $parentVirtual): array
+    {
+        $fs = $this->fs();
+        $name = basename($rel);
+
+        // если это директория — вернём в формате FileDto как "directory"
+        if ($fs->directoryExists($rel)) {
+            return [
+                'name' => $name,
+                'path' => $parentVirtual,
+                'extension' => null,
+                'type' => 'dir',
+                'fileType' => 'directory',
+                'url' => null,
+                'meta' => $this->dirFileMeta(),
+            ];
+        }
+
+        // иначе — файл
+        $extension = pathinfo($name, PATHINFO_EXTENSION);
+        $mime = null;
+        try {
+            $mime = $fs->mimeType($rel);
+        } catch (FilesystemException) {
+            // тип не определился — не критично
+        }
+
+        return [
+            'name' => $name,
+            'path' => $parentVirtual,
+            'extension' => $extension,
+            'type' => 'file',
+            'fileType' => $mime ?: $extension,
+            'url' => $this->publicUrl($rel),
+            'meta' => $this->fileMetaFor($fs, $rel),
+        ];
+    }
 
     /**
      * Проверяет, что значение — одиночное имя файла/директории (один сегмент пути),
@@ -458,6 +514,20 @@ class FileManagerService
             'aTime' => $mtime,
             'size' => 0,
         ];
+    }
+
+    /**
+     * Метаданные директории в ПОЛНОЙ форме FileMetaDto — для ответов, где папка идёт как
+     * FileDto (createDir, item в rename/move). В листинге (DirDto.meta) остаётся {@see dirMeta()}.
+     */
+    private function dirFileMeta(?int $mtime = null): array
+    {
+        return [
+            'isWritable' => true,   // фактический контроль доступа — на бэкенде/RBAC, не в правах ФС
+            'isReadable' => true,
+            'isExecutable' => false,
+            'dimensions' => null,
+        ] + $this->dirMeta($mtime);
     }
 
     /**

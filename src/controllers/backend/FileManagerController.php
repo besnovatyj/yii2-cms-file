@@ -247,7 +247,9 @@ class FileManagerController extends Controller
         }
         $service = $this->serviceFor($vp->mountId);
 
-        return $this->execute(fn(): array => $service->rename($vp->relative, $oldName, $newName)); // FileDto
+        // Отчёт RenameResponse: {ok, path, oldName, newName, item} — newName может отличаться
+        // от запрошенного (санитизация на сервере).
+        return $this->execute(fn(): array => $service->rename($vp->relative, $oldName, $newName));
     }
 
     /**
@@ -276,10 +278,8 @@ class FileManagerController extends Controller
         }
         $service = $this->serviceFor($source->mountId);
 
-        return $this->execute(static function () use ($service, $source, $target): array {
-            $service->move($source->relative, $target->relative);
-            return ['status' => 'ok'];
-        });
+        // Отчёт MoveResponse: {ok, sourcePath, targetPath, item} — фактическое состояние после операции.
+        return $this->execute(fn(): array => $service->move($source->relative, $target->relative));
     }
 
     /**
@@ -311,8 +311,9 @@ class FileManagerController extends Controller
      */
     public function actionConfig(): array
     {
-        // Конфиг не зависит от точки монтирования — берём сервис по умолчанию.
-        return $this->execute(fn(): array => $this->storage->defaultService()->getConfigDto());
-        // { fileMaxSize: string|null, allowedMimeTypes: string[] }
+        // Конфиг собирает StorageManager: общие возможности + переопределения по каждой точке
+        // монтирования (контракт GetConfigResponse).
+        return $this->execute(fn(): array => $this->storage->configDto());
+        // { contractVersion, global: {upload: {...}}, mounts?: {mountId: {...}} }
     }
 }
