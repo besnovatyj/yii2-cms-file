@@ -186,9 +186,9 @@ realpath-confine только в delete/move-source/rename). Анализ был
    `DomainException` → 422 с сообщением; прочее → 500 с нейтральным текстом, детали в лог.
 2. ✅ СДЕЛАНО (шаг 3). **Стейл-докблоки `StorageMount::path()`** (3 файла) + валидация `oldName`
    как одиночного сегмента в `rename`.
-3. **Frontend lifecycle**: ✅ `AppRuntime` window-listeners (шаг 4); далее — `bind()`-пары,
-   потерянные подписки в `DirectoryContentFeature` (шаг 5) и публичный `close()` в runtime
-   вместо `['bus']` (шаг 6).
+3. **Frontend lifecycle**: ✅ `AppRuntime` window-listeners (шаг 4); ✅ `bind()`-пары и потерянные
+   подписки в `DirectoryContentFeature`/`SplitPanelWC` (шаг 5); далее — публичный `close()`
+   в runtime вместо `['bus']` (шаг 6).
 4. **Синхронизация DTO** (`rename`, `move`, delete-failures `type`, `exif`, dir-meta) — лучше
    одним заходом с фиксацией контракта (хотя бы общие fixtures).
 5. **Публикуемость types ядра**: убрать `@/` из declarations (tsconfig.build с переписыванием
@@ -229,3 +229,11 @@ realpath-confine только в delete/move-source/rename). Анализ был
   и обработчик `fm:close`, и внешний владелец (CKEditor-адаптер), раньше это давало двойной
   `widget.destroy()`. ⚠️ Требуется пересборка dist ядра и адаптера (адаптер бандлит ядро);
   разумно сделать один раз после шагов 5–6.
+- **Шаг 5** (`npm/filemanager-core`, коммит `89e933f`): lifecycle-утечки listeners.
+  `DirectoryContentFeature`: подписки `navState`/`registry`/`selectionStore` теперь кладутся в
+  `unsubs` (раньше их `Unsubscriber` терялись); DOM-обработчики переведены в поля-стрелки —
+  `add/removeEventListener` получают одну ссылку (раньше пары делали разные `bind(this)`, отписка
+  снимала «не тот» обработчик). `SplitPanelWC`: `pointerdown` биндится один раз, у поля-стрелки
+  `handleResize` убран лишний `bind`; регистрация слушателей вынесена из-под guard'а `shadowRoot` —
+  disconnect/connect симметричны (повторное подключение элемента к DOM восстанавливает слушатели).
+  dist по-прежнему не пересобран (после шага 6).
