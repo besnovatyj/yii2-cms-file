@@ -11,6 +11,7 @@ use Besnovatyj\File\storage\exceptions\PathTraversalException;
 use Besnovatyj\File\storage\exceptions\UnknownMountException;
 use Besnovatyj\File\storage\StorageManager;
 use Besnovatyj\File\storage\VirtualPath;
+use DomainException;
 use Throwable;
 use Yii;
 use yii\web\Controller;
@@ -18,6 +19,7 @@ use yii\web\Response;
 use yii\web\BadRequestHttpException;
 use yii\web\NotFoundHttpException;
 use yii\web\ServerErrorHttpException;
+use yii\web\UnprocessableEntityHttpException;
 
 /**
  * REST-эндпоинты файлового менеджера.
@@ -79,9 +81,31 @@ class FileManagerController extends Controller
     }
 
     /**
+     * Выполняет файловую операцию, разграничивая ошибки по источнику:
+     *  - {@see DomainException} — нарушение бизнес-правила («уже существует», «не найдено»,
+     *    некорректное имя): сообщение адресовано пользователю и безопасно (содержит только
+     *    виртуальные пути) → 422 с этим сообщением;
+     *  - прочие {@see Throwable} — внутренняя ошибка (инфраструктура, адаптер хранилища):
+     *    детали ТОЛЬКО в лог, наружу — нейтральный текст без подробностей → 500.
+     * @throws UnprocessableEntityHttpException|ServerErrorHttpException
+     */
+    private function execute(callable $operation): array
+    {
+        try {
+            return $operation();
+        } catch (DomainException $e) {
+            Yii::warning($e->getMessage(), __METHOD__);
+            throw new UnprocessableEntityHttpException($e->getMessage(), 0, $e);
+        } catch (Throwable $e) {
+            Yii::$app->errorHandler->logException($e);
+            throw new ServerErrorHttpException('Внутренняя ошибка файловой операции.', 0, $e);
+        }
+    }
+
+    /**
      * POST /file/file-manager/list
      * body: { "path": "/{mountId}/..." }   ('' или '/' — виртуальный корень: перечень точек монтирования)
-     * @throws BadRequestHttpException|NotFoundHttpException|ServerErrorHttpException
+     * @throws BadRequestHttpException|NotFoundHttpException|UnprocessableEntityHttpException|ServerErrorHttpException
      */
     public function actionList(): array
     {
@@ -90,33 +114,24 @@ class FileManagerController extends Controller
             throw new BadRequestHttpException('Path is required');
         }
 
-        // Валидация запроса — ДО try: её ошибки клиентские (400/404), а не серверные.
+        // Валидация запроса — ДО execute(): её ошибки клиентские (400/404), а не серверные.
         $vp = $this->parsePath((string)$path);
         $service = $vp->isRoot() ? null : $this->serviceFor($vp->mountId);
 
-        try {
+        return $this->execute(fn(): array => [
+            'path' => $path,
             // Виртуальный корень — синтетический перечень точек монтирования как папок.
             // Иначе — содержимое директории внутри конкретной точки монтирования.
-            $item = $service === null
+            'item' => $service === null
                 ? $this->storage->virtualRootDto()
-                : $service->getFolderDto($vp->relative);
-
-            return [
-                'path' => $path,
-                'item' => $item,
-            ];
-        } catch (Throwable $e) {
-            Yii::$app->errorHandler->logException($e);
-
-            // можно вернуть 500 и JSON с message
-            throw new ServerErrorHttpException($e->getMessage(), 0, $e);
-        }
+                : $service->getFolderDto($vp->relative),
+        ]);
     }
 
     /**
      * POST /file/file-manager/upload
      * multipart/form-data: path, files[]
-     * @throws BadRequestHttpException|NotFoundHttpException|ServerErrorHttpException
+     * @throws BadRequestHttpException|NotFoundHttpException|UnprocessableEntityHttpException|ServerErrorHttpException
      */
     public function actionUpload(): array
     {
@@ -131,19 +146,14 @@ class FileManagerController extends Controller
         }
         $service = $this->serviceFor($vp->mountId);
 
-        try {
-            // FileManagerService сам берёт UploadedFile::getInstanceByName('file')
-            return $service->uploadFile($vp->relative);
-        } catch (Throwable $e) {
-            Yii::$app->errorHandler->logException($e);
-            throw new ServerErrorHttpException($e->getMessage(), 0, $e);
-        }
+        // FileManagerService сам берёт UploadedFile::getInstanceByName('file')
+        return $this->execute(fn(): array => $service->uploadFile($vp->relative));
     }
 
     /**
      * POST /file/file-manager/delete
      * body: { "paths": ["/{mountId}/a.png", "/{mountId}/b.png"] }
-     * @throws BadRequestHttpException|NotFoundHttpException|ServerErrorHttpException
+     * @throws BadRequestHttpException|NotFoundHttpException|UnprocessableEntityHttpException|ServerErrorHttpException
      */
     public function actionDelete(): array
     {
@@ -168,7 +178,7 @@ class FileManagerController extends Controller
             $services[$mountId] = $this->serviceFor((string)$mountId);
         }
 
-        try {
+        return $this->execute(static function () use ($byMount, $services): array {
             $results = [];
             foreach ($byMount as $mountId => $relatives) {
                 $res = $services[$mountId]->deletePaths($relatives);
@@ -186,16 +196,13 @@ class FileManagerController extends Controller
                     'failed' => count(array_filter($results, static fn($r) => empty($r['ok']))),
                 ],
             ];
-        } catch (Throwable $e) {
-            Yii::$app->errorHandler->logException($e);
-            throw new ServerErrorHttpException($e->getMessage(), 0, $e);
-        }
+        });
     }
 
     /**
      * POST /file/file-manager/mkdir
      * body: { "parentPath": "/{mountId}/blog", "name": "new-folder" }
-     * @throws BadRequestHttpException|NotFoundHttpException|ServerErrorHttpException
+     * @throws BadRequestHttpException|NotFoundHttpException|UnprocessableEntityHttpException|ServerErrorHttpException
      */
     public function actionMkdir(): array
     {
@@ -212,13 +219,8 @@ class FileManagerController extends Controller
         }
         $service = $this->serviceFor($vp->mountId);
 
-        try {
-            // dto: FileDto для новой папки
-            return $service->createDir($vp->relative, $name);
-        } catch (Throwable $e) {
-            Yii::$app->errorHandler->logException($e);
-            throw new ServerErrorHttpException($e->getMessage(), 0, $e);
-        }
+        // dto: FileDto для новой папки
+        return $this->execute(fn(): array => $service->createDir($vp->relative, $name));
     }
 
     /**
@@ -226,6 +228,7 @@ class FileManagerController extends Controller
      * body: { "parentPath": "/{mountId}/blog", "oldName": "old.png", "newName": "new.png" }
      * @throws BadRequestHttpException
      * @throws NotFoundHttpException
+     * @throws UnprocessableEntityHttpException
      * @throws ServerErrorHttpException
      */
     public function actionRename(): array
@@ -243,18 +246,13 @@ class FileManagerController extends Controller
         }
         $service = $this->serviceFor($vp->mountId);
 
-        try {
-            return $service->rename($vp->relative, $oldName, $newName); // FileDto
-        } catch (Throwable $e) {
-            Yii::$app->errorHandler->logException($e);
-            throw new ServerErrorHttpException($e->getMessage(), 0, $e);
-        }
+        return $this->execute(fn(): array => $service->rename($vp->relative, $oldName, $newName)); // FileDto
     }
 
     /**
      * POST /file/file-manager/move
      * body: { "sourcePath": "/{mountId}/...", "targetPath": "/{mountId}/..." }
-     * @throws BadRequestHttpException|NotFoundHttpException|ServerErrorHttpException
+     * @throws BadRequestHttpException|NotFoundHttpException|UnprocessableEntityHttpException|ServerErrorHttpException
      */
     public function actionMove(): array
     {
@@ -277,19 +275,16 @@ class FileManagerController extends Controller
         }
         $service = $this->serviceFor($source->mountId);
 
-        try {
+        return $this->execute(static function () use ($service, $source, $target): array {
             $service->move($source->relative, $target->relative);
             return ['status' => 'ok'];
-        } catch (Throwable $e) {
-            Yii::$app->errorHandler->logException($e);
-            throw new ServerErrorHttpException($e->getMessage(), 0, $e);
-        }
+        });
     }
 
     /**
      * POST /file/file-manager/analyze
      * body: { "path": "/{mountId}/origin/photo.jpg" }
-     * @throws BadRequestHttpException|NotFoundHttpException|ServerErrorHttpException
+     * @throws BadRequestHttpException|NotFoundHttpException|UnprocessableEntityHttpException|ServerErrorHttpException
      */
     public function actionAnalyze(): array
     {
@@ -305,28 +300,18 @@ class FileManagerController extends Controller
         }
         $service = $this->serviceFor($vp->mountId);
 
-        try {
-            // Возвращает массив: ['mime' => '...', 'hexDump' => '...', ...]
-            return $service->analyzeFile($vp->relative);
-        } catch (Throwable $e) {
-            Yii::$app->errorHandler->logException($e);
-            throw new ServerErrorHttpException($e->getMessage(), 0, $e);
-        }
+        // Возвращает массив: ['mime' => '...', 'hexDump' => '...', ...]
+        return $this->execute(fn(): array => $service->analyzeFile($vp->relative));
     }
 
     /**
      * GET/POST /file/file-manager/config
-     * @throws ServerErrorHttpException
+     * @throws UnprocessableEntityHttpException|ServerErrorHttpException
      */
     public function actionConfig(): array
     {
-        try {
-            // Конфиг не зависит от точки монтирования — берём сервис по умолчанию.
-            return $this->storage->defaultService()->getConfigDto();
-            // { fileMaxSize: string|null, allowedMimeTypes: string[] }
-        } catch (Throwable $e) {
-            Yii::$app->errorHandler->logException($e);
-            throw new ServerErrorHttpException($e->getMessage(), 0, $e);
-        }
+        // Конфиг не зависит от точки монтирования — берём сервис по умолчанию.
+        return $this->execute(fn(): array => $this->storage->defaultService()->getConfigDto());
+        // { fileMaxSize: string|null, allowedMimeTypes: string[] }
     }
 }

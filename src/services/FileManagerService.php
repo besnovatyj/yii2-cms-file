@@ -11,7 +11,6 @@ use DomainException;
 use League\Flysystem\FileAttributes;
 use League\Flysystem\Filesystem;
 use League\Flysystem\FilesystemException;
-use yii\base\InvalidArgumentException;
 use yii\web\UploadedFile;
 
 /**
@@ -57,8 +56,9 @@ class FileManagerService
         $rel = $this->fsPath($path);
 
         // '' — корень точки монтирования (существует всегда). Остальное проверяем.
+        // DomainException — как у остальных операций: контроллёр маппит доменные ошибки в 422.
         if ($rel !== '' && !$fs->directoryExists($rel)) {
-            throw new InvalidArgumentException("Directory $path does not exist");
+            throw new DomainException("Directory $path does not exist");
         }
 
         $isMountRoot = ($rel === '');

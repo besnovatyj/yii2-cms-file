@@ -57,9 +57,9 @@ lifecycle фронтенда, error mapping, документация). Я в ц
    отвергнет). Не дыра, но нарушение семантики контракта «имя в директории». Аналогично стоит
    проверить отсутствие `/` в `name` у `createDir` до `sanitizeName` (sanitize заменит `/` на `_`,
    так что фактически закрыто, но неявно).
-3. **Неконсистентные типы исключений**: `getFolderDto` бросает `yii\base\InvalidArgumentException`,
-   остальные методы — `DomainException`, контроллёр всё равно превращает всё в 500. При будущем
-   error mapping это придётся унифицировать.
+3. ✅ ИСПРАВЛЕНО (шаг 2): **Неконсистентные типы исключений**: `getFolderDto` бросал
+   `yii\base\InvalidArgumentException`, остальные методы — `DomainException`. Унифицировано на
+   `DomainException` вместе с введением error mapping в контроллёре.
 4. **`composer.json`**: placeholder `"email": "your-email@example.com"`; захардкоженное поле
    `"version": "1.0.0"` (при доставке через git-теги его лучше убрать — классический источник
    рассинхрона тег↔манифест).
@@ -70,14 +70,15 @@ lifecycle фронтенда, error mapping, документация). Я в ц
 
 ### 2.3. Подтверждаю проблемы, отмеченные в заметках и всё ещё актуальные
 
-- **Любая ошибка → HTTP 500.** Во всех action `BadRequestHttpException` (проверки `isRoot()`,
-  cross-mount move) бросаются **внутри** `try`, и общий `catch (Throwable)` заворачивает их в
-  `ServerErrorHttpException`. Единственный корректный 400 — отсутствие `path` в `actionList`
-  (он вне try). Подтверждаю P1 из codex.
-- **Утечка внутренних сообщений**: `ServerErrorHttpException($e->getMessage())` повсюду — текст
-  доменных исключений (включая пути внутри mount) уходит клиенту в проде. Осознанно отложено
-  (`_upd` §2.5), но фиксирую: после перехода на Flysystem абсолютных путей ФС в сообщениях больше
-  нет, утекают только относительные/виртуальные — серьёзность снизилась с «высоко» до «средне».
+- ✅ ИСПРАВЛЕНО (шаг 1, коммит `34a775e`): **Любая ошибка → HTTP 500.** Валидация запроса
+  (разбор `VirtualPath`, проверки `isRoot()`, cross-mount) вынесена до `try`; добавлены хелперы
+  `parsePath()` (`PathTraversalException` → 400) и `serviceFor()` (`UnknownMountException` → 404).
+  В `delete` сервисы всех mount резолвятся до операций — неизвестный mount отклоняет весь батч
+  до первого удаления.
+- ✅ ИСПРАВЛЕНО (шаг 2): **Утечка внутренних сообщений**: введён error mapping через хелпер
+  `execute()`: `DomainException` (бизнес-правило, сообщение адресовано пользователю, содержит
+  только виртуальные пути) → 422 с сообщением + `Yii::warning`; прочие `Throwable`
+  (инфраструктура/адаптеры) → 500 с нейтральным текстом, детали только в лог (`logException`).
 - **AuthZ только глобальный `as access`**, в пакете нет `behaviors()`/RBAC — отложено, актуально.
 - **Upload без контентной валидации** — осознанное решение (битые MIME у легитимных изображений),
   зафиксировано в memory проекта и в коде комментарием. Не считаю дефектом текущей стадии, но
@@ -161,7 +162,7 @@ realpath-confine только в delete/move-source/rename). Анализ был
 | P1: failed-элементы `delete` без обязательного `type`                          | ✅ Подтверждено: обе ветки ошибок в `deletePaths()` не кладут `type`, а `DeleteResponseDto` требует `'file'\|'folder'`.                                                                                                                                             |
 | P1: `analyze.exif: null` vs `exif?: Record<string,string>`                     | ✅ Подтверждено (PHP: `'exif' => null`).                                                                                                                                                                                                                            |
 | P1: meta директорий — сокращённый FolderMetaDto внутри заявленного FileDto     | ✅ Подтверждено: `dirMeta()` отдаёт 4 поля без `isWritable/isReadable/isExecutable/dimensions`.                                                                                                                                                                     |
-| P1: клиентские ошибки → HTTP 500                                               | ✅ Подтверждено (см. §2.3).                                                                                                                                                                                                                                         |
+| P1: клиентские ошибки → HTTP 500                                               | ✅ Подтверждено. **Исправлено** шагами 1–2 (см. §2.3 и §5).                                                                                                                                                                                                          |
 | P1: `AppRuntime.destroy()` не снимает window-listeners                         | ✅ Подтверждено (`addEventListener` в `setupGlobalErrorBoundary`, TODO на строке 108, в `destroy()` снятия нет).                                                                                                                                                    |
 | P1: утечки `bind(this)`                                                        | ✅ Подтверждено в `DirectoryContentFeature` (add/remove с разными результатами `bind`) и в `SplitPanelWC` (`handleResize` — уже arrow-property, но подписка через лишний `.bind(this)` → `removeEventListener(this.handleResize)` снимает не то).                   |
 | P1: подписки `navState`/`registry`/`selectionStore` не сохраняются для отписки | ✅ Подтверждено: в `unsubs` уходит только `viewModeStore`; три подписки (строки 47/52/67) теряются → уничтоженная feature продолжает рендерить.                                                                                                                     |
@@ -183,10 +184,9 @@ realpath-confine только в delete/move-source/rename). Анализ был
 
 Что я бы закрывал в первую очередь, объединяя остатки всех документов:
 
-1. **Error handling в `FileManagerController`** (быстро, дёшево): валидации `isRoot()`/cross-mount —
-   до `try`; в `catch` — отдельный проброс `HttpException`; перестать отдавать `getMessage()`
-   наружу (маппинг доменных исключений → безопасные сообщения; `PathTraversalException`/
-   `UnknownMountException` → 400/404). Это одновременно закрывает 500-вместо-400 и утечку сообщений.
+1. ✅ СДЕЛАНО (шаги 1–2). **Error handling в `FileManagerController`**: валидации `isRoot()`/
+   cross-mount — до `try`; `PathTraversalException`/`UnknownMountException` → 400/404;
+   `DomainException` → 422 с сообщением; прочее → 500 с нейтральным текстом, детали в лог.
 2. **Стейл-докблоки `StorageMount::path()`** (3 файла) + валидация `oldName` как одиночного
    сегмента в `rename` — точечные правки.
 3. **Frontend lifecycle** (`AppRuntime` window-listeners, `bind()`-пары, потерянные подписки в
@@ -196,11 +196,25 @@ realpath-confine только в delete/move-source/rename). Анализ был
 5. **Публикуемость types ядра**: убрать `@/` из declarations (tsconfig.build с переписыванием
    путей или bundled d.ts), единый build+types pipeline, `prepublishOnly` у всех трёх npm-пакетов;
    поправить README адаптера (упоминание `file:`).
-6. **Актуализировать `TODO.md`** (или пометить его «исторический»): пункты про BC-namespace,
-   страховку `media/` и «предстоит сборка» больше не соответствуют коду и будут путать при
-   следующем заходе.
+6. ✅ СДЕЛАНО (пользователем): `TODO.md` переименован в `NPM+GIT.md`, выполненные пункты удалены.
 7. Дальше по плану: `UploadPolicy`, пакетный RBAC, download-эндпоинт для zip/непубличных mount,
    `fmDefaultPath` `/demo` → `/static`, GitHub-доставка (vcs-блок).
 
 Пункты 1–2 — внутри `yii2-cms-file` и не требуют пересборки фронта; 3–5 — в npm-пакетах с
 пересборкой dist.
+
+---
+
+## 5. Журнал правок (фиксация по шагам)
+
+- **Шаг 1** (коммит `34a775e`, `yii2-cms-file`): `FileManagerController` — корректные HTTP-статусы.
+  Валидация запроса вынесена до `try`; хелперы `parsePath()` → 400 при traversal/NUL/`\`,
+  `serviceFor()` → 404 при неизвестном mount; в `delete` неизвестный mount отклоняет весь батч
+  до первого удаления. `catch (Throwable)` → 500 остался только вокруг файловых операций.
+- **Шаг 2** (`yii2-cms-file`): error mapping + устранение утечки внутренних сообщений.
+  Хелпер `execute()` в контроллёре: `DomainException` → 422 (сообщение пользователю, лог-warning),
+  прочие `Throwable` → 500 «Внутренняя ошибка файловой операции» (детали только в лог).
+  `FileManagerService::getFolderDto()`: `yii\base\InvalidArgumentException` → `DomainException`
+  (унификация доменных ошибок, иначе «директория не существует» стала бы нейтральным 500).
+  Контракт для фронтенда: «не найдено/уже существует/некорректное имя» теперь приходят как 422
+  с прежним текстом в `message`; нейтральный 500 — только для настоящих внутренних сбоев.
