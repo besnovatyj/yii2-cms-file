@@ -191,9 +191,9 @@ realpath-confine только в delete/move-source/rename). Анализ был
    публичный `close()` в runtime вместо `['bus']` (шаг 6). Остаётся пересборка dist.
 4. **Синхронизация DTO** (`rename`, `move`, delete-failures `type`, `exif`, dir-meta) — принята
    парадигма «TypeScript-first», детальный пооперационный разбор и план — в §5.
-5. **Публикуемость types ядра**: ✅ `@/` из declarations убирается `tsc-alias` (шаг 8);
-   остаётся: TS5069 у `ckeditor5-codemirror`, `prepublishOnly` у адаптера и codemirror,
-   README адаптера (упоминание `file:`).
+5. ✅ СДЕЛАНО (шаги 8–9). **Публикуемость types и release-pipeline npm-пакетов**: `@/` из
+   declarations убирается `tsc-alias` (шаг 8); TS5069 у `ckeditor5-codemirror`, `prepublishOnly`
+   у адаптера и codemirror, README адаптера без `file:` (шаг 9).
 6. ✅ СДЕЛАНО (пользователем): `TODO.md` переименован в `NPM+GIT.md`, выполненные пункты удалены.
 7. Дальше по плану: `UploadPolicy`, пакетный RBAC, download-эндпоинт для zip/непубличных mount,
    `fmDefaultPath` `/demo` → `/static`, GitHub-доставка (vcs-блок).
@@ -526,3 +526,13 @@ export interface BackendCapabilities {
   неразрешим (P0 codex). `prepublishOnly` уже вызывает `types` — publish покрыт. Ambient-модули
   scss/svg в declarations не протекают (проверено). Требуется: `npm install` (подтянет
   `tsc-alias@^1.8.16`) + `npm run types`, контроль: `grep -r "@/" dist --include=*.d.ts` пуст.
+  Выполнено пользователем: dist перегенерирован, core опубликован как 1.0.3. Попутный фикс
+  (`ckeditor5-filemanager` `367b2c4`): аннотация `url` в `handleFilesSelected` выровнена с
+  контрактом ядра `string | null` (typecheck адаптера падал с TS2322 после релакса шага 7б).
+- **Шаг 9** (`ckeditor5-codemirror` `cd7c7d5` + `ckeditor5-filemanager` `f47ff30`):
+  release-pipeline хвосты. tsconfig codemirror: убран зашитый `emitDeclarationOnly: true`
+  (с `declaration: false` валил обычный `tsc --noEmit` с TS5069; флаги передаёт CLI скрипта
+  `types`). Обоим плагинам добавлен `prepublishOnly = build + types` (по образцу ядра) —
+  publish не уедет со стейл-dist/без declarations. README адаптера: сборка через npm registry
+  (`^1.0.x`) вместо устаревшего `file:../../npm/filemanager-core`, добавлен `npm run types` и
+  порядок проверки локальных правок ядра.
