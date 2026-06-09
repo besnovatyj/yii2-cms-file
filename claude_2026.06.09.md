@@ -77,10 +77,11 @@ lifecycle фронтенда, error mapping, документация). Я в ц
   только виртуальные пути) → 422 с сообщением + `Yii::warning`; прочие `Throwable`
   (инфраструктура/адаптеры) → 500 с нейтральным текстом, детали только в лог (`logException`).
 - **AuthZ только глобальный `as access`**, в пакете нет `behaviors()`/RBAC — отложено, актуально.
-- **Upload без контентной валидации** — осознанное решение (битые MIME у легитимных изображений),
-  зафиксировано в memory проекта и в коде комментарием. Не считаю дефектом текущей стадии, но
-  напомню: `.php/.svg/.html` на статик-домен — это хранимый XSS/RCE-вектор, и `UploadPolicy`
-  остаётся самым важным незакрытым security-пунктом бэкенда.
+- ⚠️ ЧАСТИЧНО ЗАКРЫТО (шаг 11): **Upload без контентной валидации**. Введён каркас `UploadPolicy`
+  (конвейер правил) с блок-листом исполняемых расширений (RCE-вектор `.php` закрыт, включая
+  двойные расширения и обход через rename) и лимитом размера. Контентная/MIME-валидация
+  (`.svg/.html` XSS-вектор) — по-прежнему осознанно отложена, но теперь это «ещё одно правило
+  в контейнере», а не рефакторинг.
 
 ---
 
@@ -194,8 +195,9 @@ realpath-confine только в delete/move-source/rename). Анализ был
    declarations убирается `tsc-alias` (шаг 8); TS5069 у `ckeditor5-codemirror`, `prepublishOnly`
    у адаптера и codemirror, README адаптера без `file:` (шаг 9).
 6. ✅ СДЕЛАНО (пользователем): `TODO.md` переименован в `NPM+GIT.md`, выполненные пункты удалены.
-7. Дальше по плану: `UploadPolicy`, пакетный RBAC, download-эндпоинт для zip/непубличных mount,
-   GitHub-доставка (vcs-блок). (`fmDefaultPath` `/demo` → `/static` — ✅ шаг 10.)
+7. Дальше по плану: пакетный RBAC, download-эндпоинт для zip/непубличных mount,
+   GitHub-доставка (vcs-блок). (`fmDefaultPath` — ✅ шаг 10; `UploadPolicy` — ✅ шаг 11,
+   MIME/контент остаются как будущие правила конвейера.)
 
 Пункты 1–2 — внутри `yii2-cms-file` и не требуют пересборки фронта; 3–5 — в npm-пакетах с
 пересборкой dist.
@@ -539,3 +541,18 @@ export interface BackendCapabilities {
   `'/demo'` → `'/static'` — после перехода на mount-адресацию старый дефолт указывал на
   несуществующую точку монтирования (последний отложенный пункт §5 миграции из
   `adaptive-scribbling-pixel_upd.md`).
+- **Шаг 11** (`yii2-cms-file` + `npm/filemanager-core` `27f9c0d`): **UploadPolicy** — серверная
+  политика загрузки как конвейер правил (новый слой `src/upload/`):
+  `UploadRuleInterface` (validate + capabilities), `FileNameRuleInterface` (грань для проверок
+  имени вне загрузки), `UploadPolicy` (validate/validateName/capabilities),
+  `UploadRejectedException` (наследник DomainException → 422 существующим error mapping'ом).
+  Правила: `ExtensionBlocklistRule` — блок исполняемых расширений по ВСЕМ dot-сегментам имени
+  (`shell.php.jpg` отклоняется; применяется и к rename — иначе обход «safe.txt → shell.php»);
+  `MaxFileSizeRule` — min(параметр `upload.maxFileSize`, ini-лимиты PHP; ini-парсер переехал
+  сюда из StorageManager). Сборка политики — DI в `container.php` (новая валидация = ещё одно
+  правило в списке, сервис/контроллёры/контракт не меняются); дефолты — `config.php` `params.upload`
+  (`blockedExtensions: null` = дефолтный список, `[]` = отключить). `StorageManager` инжектит
+  политику в сервисы; `configDto().global.upload` собирается из `policy->capabilities()`
+  (maxFileSize, blockedExtensions — в TS-контракт добавлено поле `blockedExtensions`).
+  В `sua()`-заглушке зафиксировано требование «та же политика». MIME/контент-валидация —
+  осознанно отложенное БУДУЩЕЕ ПРАВИЛО этого же конвейера.

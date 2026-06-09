@@ -9,6 +9,7 @@ declare(strict_types=1);
 namespace Besnovatyj\File\storage;
 
 use Besnovatyj\File\services\FileManagerService;
+use Besnovatyj\File\upload\UploadPolicy;
 
 /**
  * Фасад слоя хранилищ — единственная точка входа для контроллёров файлового менеджера.
@@ -23,8 +24,10 @@ use Besnovatyj\File\services\FileManagerService;
  */
 final class StorageManager
 {
-    public function __construct(private readonly MountRegistry $registry)
-    {
+    public function __construct(
+        private readonly MountRegistry $registry,
+        private readonly UploadPolicy $uploadPolicy,
+    ) {
     }
 
     public function registry(): MountRegistry
@@ -38,13 +41,13 @@ final class StorageManager
      */
     public function serviceFor(string $mountId): FileManagerService
     {
-        return new FileManagerService($this->registry->get($mountId));
+        return new FileManagerService($this->registry->get($mountId), $this->uploadPolicy);
     }
 
     /** Сервис точки монтирования по умолчанию (для mount-независимых операций: sua). */
     public function defaultService(): FileManagerService
     {
-        return new FileManagerService($this->registry->getDefault());
+        return new FileManagerService($this->registry->getDefault(), $this->uploadPolicy);
     }
 
     /**
@@ -70,16 +73,20 @@ final class StorageManager
         $dto = [
             'contractVersion' => 1,
             'global' => [
-                'upload' => [
-                    // Лимит в БАЙТАХ из ini-настроек PHP; null = лимита нет (контракт BackendCapabilities).
-                    'maxFileSize' => $this->uploadMaxBytes(),
-                    // Контентные ограничения осознанно не вводим (битые MIME у легитимных
-                    // изображений) — null = ограничений нет. К будущей UploadPolicy.
-                    // TODO in js: `<input type="file" id="fileInput" accept="image/*" />`
-                    // TODO in js: `if (file && file.type.startsWith('image/')) {}`
-                    'allowedMimeTypes' => null,
-                    'allowedExtensions' => null,
-                ],
+                // Ограничения загрузки декларируют сами правила UploadPolicy (capabilities) —
+                // сегодня это maxFileSize (min из настроек и ini PHP) и blockedExtensions.
+                // Контентные ограничения осознанно не вводим (битые MIME у легитимных
+                // изображений) — null = ограничений нет. Появятся как правила UploadPolicy.
+                // TODO in js: `<input type="file" id="fileInput" accept="image/*" />`
+                // TODO in js: `if (file && file.type.startsWith('image/')) {}`
+                'upload' => array_merge(
+                    [
+                        'maxFileSize' => null,
+                        'allowedMimeTypes' => null,
+                        'allowedExtensions' => null,
+                    ],
+                    $this->uploadPolicy->capabilities()
+                ),
             ],
         ];
         if ($mounts !== []) {
@@ -87,42 +94,6 @@ final class StorageManager
         }
 
         return $dto;
-    }
-
-    /**
-     * Фактический лимит размера загрузки: минимум из upload_max_filesize и post_max_size.
-     * null — лимита нет (0/пусто в ini).
-     */
-    private function uploadMaxBytes(): ?int
-    {
-        $limits = array_filter([
-            self::iniToBytes((string)ini_get('upload_max_filesize')),
-            self::iniToBytes((string)ini_get('post_max_size')),
-        ]);
-
-        return $limits === [] ? null : min($limits);
-    }
-
-    /**
-     * Перевод ini-нотации размера ('2M', '512K', '1G', '100') в байты.
-     * null — значение пустое или 0 (в семантике ini «без лимита»).
-     */
-    private static function iniToBytes(string $value): ?int
-    {
-        $value = trim($value);
-        if ($value === '' || $value === '0' || $value === '-1') {
-            return null;
-        }
-
-        $bytes = (float)$value;
-        $bytes *= match (strtolower(substr($value, -1))) {
-            'g' => 1024 ** 3,
-            'm' => 1024 ** 2,
-            'k' => 1024,
-            default => 1,
-        };
-
-        return $bytes > 0 ? (int)$bytes : null;
     }
 
     /**

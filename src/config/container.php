@@ -9,6 +9,9 @@ declare(strict_types=1);
 use Besnovatyj\File\storage\MountRegistry;
 use Besnovatyj\File\storage\StorageManager;
 use Besnovatyj\File\storage\StorageMountFactory;
+use Besnovatyj\File\upload\rules\ExtensionBlocklistRule;
+use Besnovatyj\File\upload\rules\MaxFileSizeRule;
+use Besnovatyj\File\upload\UploadPolicy;
 use yii\di\Container;
 
 /**
@@ -72,7 +75,28 @@ return static function (Container $container): void {
         return new MountRegistry($mounts, 'static');
     });
 
+    // Серверная политика загрузки — конвейер правил. Добавление новой валидации (MIME/контент
+    // через finfo, размеры изображений, санитизация SVG, per-mount ограничения...) — ещё один
+    // объект-правило в этом списке; сервис, контроллёры и контракт API не меняются.
+    $container->setSingleton(UploadPolicy::class, static function (): UploadPolicy {
+        $module = \Yii::$app->getModule('File');
+        $upload = (array)($module?->params['upload'] ?? []);
+
+        return new UploadPolicy([
+            // Блок исполняемых расширений (все dot-сегменты имени: shell.php.jpg тоже отклоняется).
+            new ExtensionBlocklistRule(
+                (array)($upload['blockedExtensions'] ?? ExtensionBlocklistRule::DEFAULT_BLOCKED)
+            ),
+            // Лимит размера: min(настроенный в params, ini-лимиты PHP); null = только ini.
+            new MaxFileSizeRule(
+                isset($upload['maxFileSize']) && (int)$upload['maxFileSize'] > 0
+                    ? (int)$upload['maxFileSize']
+                    : null
+            ),
+        ]);
+    });
+
     $container->setSingleton(StorageManager::class, static function (Container $c): StorageManager {
-        return new StorageManager($c->get(MountRegistry::class));
+        return new StorageManager($c->get(MountRegistry::class), $c->get(UploadPolicy::class));
     });
 };

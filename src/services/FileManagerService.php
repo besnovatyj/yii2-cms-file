@@ -7,6 +7,7 @@
 namespace Besnovatyj\File\services;
 
 use Besnovatyj\File\storage\StorageMount;
+use Besnovatyj\File\upload\UploadPolicy;
 use DomainException;
 use League\Flysystem\FileAttributes;
 use League\Flysystem\Filesystem;
@@ -30,7 +31,11 @@ class FileManagerService
 {
     public StorageMount $mount;
 
-    public function __construct(StorageMount $mount)
+    /**
+     * @param UploadPolicy|null $policy Серверная политика загрузки (null — без проверок;
+     *                                  в боевой сборке всегда передаётся из StorageManager).
+     */
+    public function __construct(StorageMount $mount, private readonly ?UploadPolicy $policy = null)
     {
         $this->mount = $mount;
     }
@@ -186,10 +191,11 @@ class FileManagerService
 
     public function uploadFile(string $path): array
     {
-        // TODO Надо кучу проверок или чужую библиотеку (как в ckfinder).
-        // TODO В любом случае надо проверять файлы на безопасность.
-        // Контентную/MIME-валидацию здесь намеренно НЕ делаем: много легитимных изображений с битой
-        // MIME-типизацией ложно отвергаются. Это к будущей UploadPolicy.
+        // Серверные проверки загрузки — в UploadPolicy (блок-лист расширений, лимит размера;
+        // состав правил собирается в config/container.php). Новая валидация = новое правило
+        // UploadRuleInterface — этот метод не меняется.
+        // Контентную/MIME-валидацию намеренно НЕ включаем: много легитимных изображений с битой
+        // MIME-типизацией ложно отвергаются. Когда понадобится — отдельное правило в UploadPolicy.
 
         $file = UploadedFile::getInstanceByName('file');
         if (!$file instanceof UploadedFile) {
@@ -203,6 +209,10 @@ class FileManagerService
         }
 
         $fileName = $this->sanitizeName($file->name);
+
+        // Политика проверяет ФАКТИЧЕСКОЕ имя записи (после санитизации); нарушение → 422.
+        $this->policy?->validate($file, $fileName, $this->mount);
+
         $targetRel = ($dirRel === '' ? '' : $dirRel . '/') . $fileName;
 
         // Пишем потоком — не держим весь файл в памяти (важно для больших файлов и S3).
@@ -294,6 +304,10 @@ class FileManagerService
             throw new DomainException('New name is empty or invalid.');
         }
 
+        // Имя-ограничения политики (блок-лист расширений) действуют и на rename — иначе они
+        // обходились бы переименованием уже загруженного файла (safe.txt → shell.php).
+        $this->policy?->validateName($safeNewName, $this->mount);
+
         $fs = $this->fs();
         $dirRel = $this->fsPath($path);
         $oldRel = ($dirRel === '' ? '' : $dirRel . '/') . $oldName;
@@ -363,6 +377,7 @@ class FileManagerService
     /**
      * TODO - Заглушка, реализовать
      * Обработчик загрузки через 'Simple Upload Adapter'.
+     * При реализации ОБЯЗАН пройти ту же {@see UploadPolicy} ($this->policy), что и uploadFile().
      */
     public function sua(mixed $post): array
     {
