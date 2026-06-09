@@ -328,10 +328,11 @@ PHP: `url` уже есть; `item` собрать через существую�
 
 ### 5.3. План реализации (по шагам, «один шаг — один коммит»)
 
-- **Шаг 7а** (`npm/filemanager-core`): ревизия `ports.ts`/`dto.ts` под целевые контракты
-  (rename/move/upload-отчёты, delete `type+'unknown'`, `exif|null`, порт `getConfig`) +
-  актуализация `MoveService`/`RenameService` типов. Поведение фич не меняется (они потребляют
-  подмножество).
+- ✅ **Шаг 7а** (`npm/filemanager-core`, коммит `4ec2682`): ревизия `ports.ts`/`dto.ts` под
+  целевые контракты (rename/move/upload-отчёты, delete `type+'unknown'`, `exif|null`,
+  слоистый `GetConfigResponse`+`BackendCapabilities` из §5.5, порт+реализация `getConfig`).
+  `MoveService`/`RenameService` менять не пришлось — возвращаемые типы выводятся. Поведение фич
+  не меняется (они потребляют подмножество).
 - **Шаг 7б** (`yii2-cms-file`): PHP наполняет контракты: `rename`-отчёт, `move`-отчёт с `item`,
   `delete` — `type` во всех ветках + нейтральные per-item сообщения, `upload` — `item`,
   `createDir` — полный `FileMetaDto`, `config` — `fileMaxSize: null`. Плюс `fileType`: заменить
@@ -487,3 +488,12 @@ export interface BackendCapabilities {
   `npm run types`, поднять версию (1.0.1) и опубликовать в npm (либо временно вернуть
   `file:../../npm/filemanager-core` в адаптере); (2) в адаптере — обновить зависимость,
   `npm install && npm run build` (+ `types`); (3) закоммитить dist обоих пакетов.
+- **Шаг 7а** (`npm/filemanager-core`, коммит `4ec2682`): ревизия контрактов API по §5
+  (TS-first). `RenameResponse`/`MoveResponse` — операционные отчёты с `item: FileDto` и
+  фактическими (после санитизации) именами; `UploadResponse` + `url`/`item?`; delete
+  `type: 'file'|'folder'|'unknown'` обязателен во всех ветках; `exif/audioTags` допускают `null`;
+  `GetConfigResponse` — слоистый (`contractVersion`/`global`/`mounts`) поверх
+  `BackendCapabilities` (§5.5); в `IFileManagerBackend` добавлен `getConfig()` + реализация в
+  `HttpFileManagerBackend`; ленивая модель `countChild*` задокументирована в `DirDto`.
+  До шага 7б фронт совместим со старым PHP-ответом: новые поля отчётов фичи пока не читают
+  (используется только `res.path` у rename, существующий в обоих форматах).
