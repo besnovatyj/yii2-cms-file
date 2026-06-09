@@ -137,10 +137,9 @@ realpath-confine только в delete/move-source/rename). Анализ был
   `typeof === 'string'`, с поясняющими комментариями.
 - ✅ §3.2 — `throw` в `UploadService.upload` действительно закомментирован.
 - ✅ §4 — таблица слоя `storage/` соответствует файлам один в один; composer-зависимости добавлены.
-- ⚠️ §5 (миграция): «`fmDefaultPath` редактора `'/demo'` — поправить на `'/'` или `'/static'`» —
-  **до сих пор не поправлено**: в `yii2-cms-ckeditor5/src/CkeditorCustomWidget.php` по-прежнему
-  `public string $fmDefaultPath = '/demo'`. У standalone-виджета `yii2-cms-file-manager` — `'/'` (ок).
-  Пункт остаётся открытой задачей, документ это и предсказывал.
+- ✅ ИСПРАВЛЕНО (шаг 10): §5 (миграция): «`fmDefaultPath` редактора `'/demo'` — поправить» —
+  в `yii2-cms-ckeditor5/src/CkeditorCustomWidget.php` теперь `'/static'` (корень основной точки
+  монтирования). У standalone-виджета `yii2-cms-file-manager` — `'/'` (было ок).
 
 ### 3.5. `codex-analysis.md` — подтверждаю; точность высокая
 
@@ -196,7 +195,7 @@ realpath-confine только в delete/move-source/rename). Анализ был
    у адаптера и codemirror, README адаптера без `file:` (шаг 9).
 6. ✅ СДЕЛАНО (пользователем): `TODO.md` переименован в `NPM+GIT.md`, выполненные пункты удалены.
 7. Дальше по плану: `UploadPolicy`, пакетный RBAC, download-эндпоинт для zip/непубличных mount,
-   `fmDefaultPath` `/demo` → `/static`, GitHub-доставка (vcs-блок).
+   GitHub-доставка (vcs-блок). (`fmDefaultPath` `/demo` → `/static` — ✅ шаг 10.)
 
 Пункты 1–2 — внутри `yii2-cms-file` и не требуют пересборки фронта; 3–5 — в npm-пакетах с
 пересборкой dist.
@@ -536,3 +535,7 @@ export interface BackendCapabilities {
   publish не уедет со стейл-dist/без declarations. README адаптера: сборка через npm registry
   (`^1.0.x`) вместо устаревшего `file:../../npm/filemanager-core`, добавлен `npm run types` и
   порядок проверки локальных правок ядра.
+- **Шаг 10** (`yii2-cms-ckeditor5`, коммит `ad69ec9`): `fmDefaultPath` виджета редактора
+  `'/demo'` → `'/static'` — после перехода на mount-адресацию старый дефолт указывал на
+  несуществующую точку монтирования (последний отложенный пункт §5 миграции из
+  `adaptive-scribbling-pixel_upd.md`).
