@@ -1,3 +1,26 @@
+# Моя заметка по пакетам и модулям входящим в данный рабочий процесс
+
+Пути к пакетам:
+
+- `/workspace/app/packages/besnovatyj/yii2-cms-file-before` - Старый пакет, в состоянии до разделения на отдельные
+  пакеты и до перехода на Flysystem
+
+- `/workspace/app/packages/besnovatyj/ckeditor5-codemirror` - Плагин codemirror для CKEditor 5 (PHP+TS)
+- `/workspace/app/packages/npm/filemanager-core` - Файловый менеджер на TS.
+- `/workspace/app/packages/besnovatyj/ckeditor5-filemanager` - CKEditor 5 адаптер файлового менеджера (TS адаптер + PHP
+  AssetBundle)
+- `/workspace/app/packages/besnovatyj/yii2-cms-ckeditor5` - CKEditor 5 (TS ckeditor5 ядро, TS базовый редактор с кучей
+  плагинов (собираем в бандл все плагины, включаем необходимые через конфиг в PHP виджете), PHP-виджет, PHP-контракт для
+  AssetBundle плагинов)
+- `/workspace/app/packages/besnovatyj/yii2-cms-file` - PHP бэкэнд файлового менеджера на Flysystem + PHP виджет CKEditor
+  5 с подключёнными плагинами
+- `/workspace/app/packages/besnovatyj/yii2-cms-file-manager` - Standalone PHP виджет файлового менеджера
+  \+ slim TS FM wrap
+
+Заметка отражает текущее состояние по пакетам на 9 июня 2026 года.
+
+---
+
 # Анализ разделения `yii2-cms-file-before`
 
 Дата анализа: 8 июня 2026 года.
@@ -95,7 +118,9 @@ declarations для `@besnovatyj/filemanager-core`.
 Зависимость задана как:
 
 ```json
-{"@besnovatyj/filemanager-core": "file:../../npm/filemanager-core"}
+{
+    "@besnovatyj/filemanager-core": "file:../../npm/filemanager-core"
+}
 ```
 
 Это допустимо только для локальной разработки. После публикации или установки tarball относительный путь потребителя не
