@@ -195,9 +195,9 @@ realpath-confine только в delete/move-source/rename). Анализ был
    declarations убирается `tsc-alias` (шаг 8); TS5069 у `ckeditor5-codemirror`, `prepublishOnly`
    у адаптера и codemirror, README адаптера без `file:` (шаг 9).
 6. ✅ СДЕЛАНО (пользователем): `TODO.md` переименован в `NPM+GIT.md`, выполненные пункты удалены.
-7. Дальше по плану: пакетный RBAC, download-эндпоинт для zip/непубличных mount,
-   GitHub-доставка (vcs-блок). (`fmDefaultPath` — ✅ шаг 10; `UploadPolicy` — ✅ шаг 11,
-   MIME/контент остаются как будущие правила конвейера.)
+7. Дальше по плану: пакетный RBAC, GitHub-доставка (vcs-блок). (`fmDefaultPath` — ✅ шаг 10;
+   `UploadPolicy` — ✅ шаг 11, MIME/контент остаются как будущие правила конвейера;
+   download-эндпоинт — ✅ шаг 12, UI-фича «Скачать» в контекстном меню — отдельная задача.)
 
 Пункты 1–2 — внутри `yii2-cms-file` и не требуют пересборки фронта; 3–5 — в npm-пакетах с
 пересборкой dist.
@@ -556,3 +556,12 @@ export interface BackendCapabilities {
   (maxFileSize, blockedExtensions — в TS-контракт добавлено поле `blockedExtensions`).
   В `sua()`-заглушке зафиксировано требование «та же политика». MIME/контент-валидация —
   осознанно отложенное БУДУЩЕЕ ПРАВИЛО этого же конвейера.
+- **Шаг 12** (`yii2-cms-file` + `npm/filemanager-core` `bdc76ad`): **download-эндпоинт** для
+  mount без публичной отдачи (zip, будущий приватный S3). PHP: `FileManagerService::download()`
+  (поток Flysystem + name/mime/size), `actionDownload` — `GET ?path=...`, отдача через
+  `sendStreamAsFile` СТРОГО attachment + `X-Content-Type-Options: nosniff` (inline-отдача
+  пользовательских `.html/.svg` с backend-домена = хранимый XSS в админке); «не найден» → 404
+  (эндпоинт открывается навигацией браузера, не XHR). TS: `IFileManagerBackend.getDownloadUrl()`
+  — синхронный билдер URL (`<connector>/download?path=...`), геттер `HttpClient.baseUrl`.
+  Дополняет семантику `FileDto.url: null`. UI-фича «Скачать» (контекстное меню) — следующая
+  отдельная задача; контракт готов.

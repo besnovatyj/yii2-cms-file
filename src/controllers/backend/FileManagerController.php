@@ -306,6 +306,44 @@ class FileManagerController extends Controller
     }
 
     /**
+     * GET /file/file-manager/download?path=/{mountId}/dir/file.ext
+     *
+     * Скачивание файла потоком через бэкенд — для точек монтирования без публичной отдачи
+     * (ZIP-архив, приватный S3); URL строит фронтенд (IFileManagerBackend.getDownloadUrl).
+     * Отдаём СТРОГО attachment + nosniff: inline-отдача пользовательских файлов (.html/.svg)
+     * с backend-домена была бы хранимым XSS в админке.
+     *
+     * @throws BadRequestHttpException|NotFoundHttpException|ServerErrorHttpException
+     */
+    public function actionDownload(string $path): Response
+    {
+        $vp = $this->parsePath($path);
+        if ($vp->isRoot()) {
+            throw new BadRequestHttpException('Виртуальный корень не является файлом.');
+        }
+        $service = $this->serviceFor($vp->mountId);
+
+        try {
+            $file = $service->download($vp->relative);
+        } catch (DomainException $e) {
+            // Эндпоинт открывается навигацией браузера — «файл не найден» здесь корректнее как 404.
+            throw new NotFoundHttpException($e->getMessage(), 0, $e);
+        } catch (Throwable $e) {
+            Yii::$app->errorHandler->logException($e);
+            throw new ServerErrorHttpException('Внутренняя ошибка файловой операции.', 0, $e);
+        }
+
+        $response = Yii::$app->response;
+        $response->headers->set('X-Content-Type-Options', 'nosniff');
+
+        return $response->sendStreamAsFile($file['stream'], $file['name'], [
+            'mimeType' => $file['mimeType'],
+            'fileSize' => $file['size'],
+            'inline' => false,
+        ]);
+    }
+
+    /**
      * GET/POST /file/file-manager/config
      * @throws UnprocessableEntityHttpException|ServerErrorHttpException
      */

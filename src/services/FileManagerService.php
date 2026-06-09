@@ -334,6 +334,48 @@ class FileManagerService
         ];
     }
 
+    // ======= DOWNLOAD =======
+
+    /**
+     * Поток файла для скачивания ЧЕРЕЗ БЭКЕНД — для точек монтирования без публичной отдачи
+     * (ZIP-архив, приватный S3); работает и для остальных. Дополняет `url: null` в FileDto.
+     *
+     * Контроллёр обязан отдавать строго attachment (не inline): inline-отдача пользовательского
+     * контента (.html/.svg) с backend-домена — это хранимый XSS уже в админке.
+     *
+     * @return array{stream: resource, name: string, mimeType: string, size: int|null}
+     */
+    public function download(string $path): array
+    {
+        $fs = $this->fs();
+        $rel = $this->fsPath($path);
+
+        if (!$fs->fileExists($rel)) {
+            throw new DomainException('Файл не найден: ' . $path);
+        }
+
+        $mime = 'application/octet-stream';
+        try {
+            $mime = $fs->mimeType($rel) ?: $mime;
+        } catch (FilesystemException) {
+            // тип не определился — отдаём как octet-stream
+        }
+
+        $size = null;
+        try {
+            $size = $fs->fileSize($rel);
+        } catch (FilesystemException) {
+            // размер не критичен (без Content-Length скачивание всё равно работает)
+        }
+
+        return [
+            'stream' => $fs->readStream($rel),
+            'name' => basename($rel),
+            'mimeType' => $mime,
+            'size' => $size,
+        ];
+    }
+
     // ======= ANALYZE =======
 
     /**
