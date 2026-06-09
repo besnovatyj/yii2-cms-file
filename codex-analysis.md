@@ -9,7 +9,7 @@
 - `/workspace/app/packages/npm/filemanager-core` - Файловый менеджер на TS.
 - `/workspace/app/packages/besnovatyj/ckeditor5-filemanager` - CKEditor 5 адаптер файлового менеджера (TS адаптер + PHP
   AssetBundle)
-- `/workspace/app/packages/besnovatyj/yii2-cms-ckeditor5` - CKEditor 5 (TS ckeditor5 ядро, TS базовый редактор с кучей
+- `/workspace/app/packages/besnovatyj/yii2-cms-ckeditor5` - CKEditor 5 (TS CKEditor 5 ядро, TS базовый редактор с кучей
   плагинов (собираем в бандл все плагины, включаем необходимые через конфиг в PHP виджете), PHP-виджет, PHP-контракт для
   AssetBundle плагинов)
 - `/workspace/app/packages/besnovatyj/yii2-cms-file` - PHP бэкэнд файлового менеджера на Flysystem + PHP виджет CKEditor
@@ -23,7 +23,7 @@
 
 # Анализ разделения `yii2-cms-file-before`
 
-Дата анализа: 8 июня 2026 года.
+Дата первоначального анализа: 8 июня 2026 года. Повторная проверка: 9 июня 2026 года.
 
 ## Краткий вывод
 
@@ -42,9 +42,9 @@
 менеджера находились в одном дереве.
 
 Однако текущий результат следует считать **рабочей локальной декомпозицией**, а не готовым релизом `1.0.0`. Основные
-причины: отсутствующие declaration-файлы при заявленном типизированном API, локальная `file:`-зависимость в
-npm-манифесте, несовместимые диапазоны CKEditor, рассинхронизация нескольких DTO и отсутствие автоматических тестов
-контрактов.
+причины после повторной проверки: declaration-файлы созданы, но публичные declarations `filemanager-core` содержат
+неразрешимые для потребителя алиасы `@/`; сохраняются рассинхронизация нескольких DTO, lifecycle-утечки и отсутствие
+автоматических тестов контрактов. Локальная `file:`-зависимость и несовместимые диапазоны CKEditor исправлены.
 
 ## Что сделано хорошо
 
@@ -91,29 +91,33 @@ repository это работает прозрачно.
 
 ## Критичные и значимые проблемы
 
-### P0. npm-пакеты заявляют типы, которых нет в `dist`
+### P0. ⚠️ Declaration-файлы появились, но типизированный API `filemanager-core` всё ещё не готов к публикации
 
-Фактическое состояние:
+Повторная проверка подтвердила, что исходная проблема частично исправлена:
 
-- `filemanager-core/package.json` объявляет `types: dist/standalone.d.ts`, но Git содержит только `standalone.js` и map;
-- `ckeditor5-filemanager/package.json` объявляет `dist/index.d.ts`, но файла нет;
-- `ckeditor5-codemirror/package.json` объявляет `dist/codemirror.d.ts`, но файла нет.
+- `dist/standalone.d.ts`, `dist/index.d.ts` и `dist/codemirror.d.ts` существуют и отслеживаются Git;
+- у всех трёх npm-пакетов есть скрипт `types`;
+- внутренний `tsc --noEmit` проходит у `filemanager-core` и `ckeditor5-filemanager`.
 
-Из-за этого `ckeditor5-filemanager` уже сейчас не проходит strict TypeScript-проверку с `TS7016`: TypeScript не находит
-declarations для `@besnovatyj/filemanager-core`.
+Но `filemanager-core/dist/standalone.d.ts` экспортирует сущности через пути вида `@/app/createApp`, а внутренние `.d.ts`
+содержат множество таких же импортов. Алиас `@/*` настроен только в `tsconfig.json` самого core и не является частью
+контракта установленного npm-пакета. Обычный consumer не обязан знать этот алиас, поэтому declarations формально есть,
+но публичная точка `types` не является переносимой.
 
-Причина в `filemanager-core`: скрипт `types` пытается переопределить `noEmit`, но declaration-файл не является частью
-текущего коммита и не создаётся обычным `npm run build`. У плагинов отдельного корректного шага генерации declarations
-вообще нет, а в `ckeditor5-codemirror/tsconfig.json` одновременно указаны `noEmit: true` и `emitDeclarationOnly: true`.
+Дополнительно `ckeditor5-codemirror` не проходит обычный `tsc -p tsconfig.json --noEmit`: `emitDeclarationOnly: true`
+остаётся в `tsconfig.json`, но `declaration` задаётся только CLI-скриптом `types`, из-за чего TypeScript выдаёт `TS5069`.
+У `ckeditor5-filemanager` и `ckeditor5-codemirror` нет `prepublishOnly`, а обычный `npm run build` по-прежнему создаёт
+только JS. Поэтому единый build/release pipeline пока не гарантирует наличие актуальных `.d.ts`.
 
 Рекомендация:
 
 1. В каждом публикуемом npm-пакете сделать единый `build`, который гарантированно создаёт JS, source map и `.d.ts`.
-2. Добавить отдельный `tsconfig.build.json` без `noEmit`.
+2. Добавить отдельный `tsconfig.build.json` и переписать алиасы в declarations на относительные пути либо собирать один
+   bundled `.d.ts` (`rollup-plugin-dts`, API Extractor и аналог).
 3. Проверять существование всех путей из `main`, `types` и `exports` в CI и через `npm pack --dry-run`.
 4. Не считать пакет выпущенным, если `npm install` из tarball и consumer typecheck не проходят.
 
-### P0. `ckeditor5-filemanager` не является переносимым npm-пакетом
+### P0. ✅ Исправлено: `ckeditor5-filemanager` использует переносимую npm-зависимость
 
 Зависимость задана как:
 
@@ -123,25 +127,20 @@ declarations для `@besnovatyj/filemanager-core`.
 }
 ```
 
-Это допустимо только для локальной разработки. После публикации или установки tarball относительный путь потребителя не
-будет соответствовать структуре текущего workspace.
+В текущем `package.json` используется `"@besnovatyj/filemanager-core": "^1.0.0"`, а lock-файл ссылается на npm tarball.
+Исходная локальная `file:`-зависимость удалена.
 
-Рекомендация: использовать нормальный semver (`^1.0.0`) в публикуемом манифесте. Для локальной разработки выбрать npm
-workspaces, pnpm workspace или overrides. Локальная топология не должна попадать в публичный dependency contract.
+Остался небольшой документационный долг: README адаптера всё ещё утверждает, что `npm install` подтягивает core через
+`file:../../npm/filemanager-core`. Эту инструкцию нужно привести в соответствие с манифестом.
 
-### P1. Версии CKEditor между пакетами рассинхронизированы
+### P1. ✅ Исправлено: версии CKEditor между пакетами выровнены
 
-- базовый пакет собирается с `ckeditor5 ^48.2.0` и lock-файлом `48.2.0`;
-- оба плагина объявляют peer `ckeditor5 ^47.2.0` и собраны/проверены с `47.7.2`.
+- базовый пакет использует `ckeditor5 ^48.2.0`;
+- оба плагина объявляют peer `ckeditor5 ^48.2.0`;
+- lock-файлы плагинов содержат `48.2.0`.
 
-Для peer dependency диапазон `^47.2.0` не допускает `48.2.0`. Формально пакетный граф несовместим, даже если текущий
-ESM-код случайно работает через import map.
-
-Дополнительно плагины компилируются против API 47, а в браузере получают API 48. Это риск несовместимости
-private/semi-public CKEditor API.
-
-Рекомендация: все пакеты одной релизной линии должны проверяться на одной версии CKEditor. Если поддерживаются две
-major-версии, peer range и CI-матрица должны это явно подтверждать.
+Формальная несовместимость peer dependency устранена. Перед релизом всё равно нужен общий browser/integration smoke test,
+потому что совпадение версий само по себе не проверяет import map и загрузку обоих ESM-плагинов.
 
 ### P1. Контракт `rename` frontend и backend не совпадает
 
@@ -163,16 +162,21 @@ major-версии, peer range и CI-матрица должны это явно
 Рекомендация: зафиксировать один OpenAPI/JSON Schema контракт либо хотя бы общие contract fixtures. Затем привести PHP
 response и TypeScript DTO к одному формату.
 
-### P1. Контракт upload также описан неточно
+### P1. ⚠️ Синхронизация остальных DTO выполнена лишь частично
 
-Frontend ожидает `UploadResponse` с `path` и `fileName`, а PHP возвращает поля `path`, `name`, `url`, `extension`,
-`type`, `fileType`, `meta`. Комментарий в интерфейсе прямо признаёт расхождение.
+Исходное замечание по upload исправлено: frontend ожидает `path` и `fileName`, PHP возвращает оба поля и дополнительный
+`url`. Такой ответ совместим со структурной типизацией TypeScript.
 
-Пока результат upload почти игнорируется, поэтому ошибка маскируется. При дальнейшем использовании ответа типы станут
-источником дефектов.
+Но остались другие расхождения:
 
-Рекомендация: вернуть `FileDto` или отдельный точно совпадающий `UploadResponseDto`; удалить комментарии вида «можно
-игнорировать» из публичных контрактов.
+- `move()` объявлен как `Promise<void>`, а PHP возвращает `{status: "ok"}`;
+- неуспешные элементы `delete` не содержат обязательный для `DeleteResponseDto` `type`;
+- PHP возвращает `analyze.exif: null`, а TypeScript допускает только объект или отсутствие поля;
+- `createDir` и rename директории заявлены как `FileDto`, но backend кладёт в `meta` сокращённый `FolderMetaDto` без
+  `isWritable`, `isReadable`, `isExecutable` и `dimensions`.
+
+Рекомендация: описать точные response DTO для каждой операции и проверять их общими fixtures/JSON Schema. Для операций,
+результат которых frontend намеренно игнорирует, всё равно не объявлять заведомо другой wire-format.
 
 ### P1. Ошибки клиента превращаются в HTTP 500
 
@@ -200,6 +204,9 @@ CKEditor-плагин создаёт новый runtime при каждом по
 Например, `DirectoryContentFeature` подписывается и отписывается через новые результаты `bind(this)`, поэтому отписка не
 удаляет исходный listener. Аналогичный дефект есть у resize listener в `SplitPanelWC`: подписка использует
 `this.handleResize.bind(this)`, отписка — `this.handleResize`.
+
+Кроме того, `DirectoryContentFeature` не сохраняет функции отписки от `navState`, `FolderRegistry` и `SelectionStore`.
+Даже после исправления `bind()` эти три подписки продолжат удерживать уничтоженную feature и вызывать повторный render.
 
 В монолите такие дефекты были локальной проблемой виджета. После выделения reusable core они становятся частью качества
 публичной библиотеки и должны быть закрыты lifecycle-тестами.
@@ -248,6 +255,10 @@ CodeMirror. После декомпозиции это не оптимальна
 Если внешние модули использовали только основной widget, миграция совместима. Если они напрямую ссылались на AssetBundle
 или старый namespace, это breaking change при неизменной версии `1.0.0`.
 
+Повторный ограниченный поиск по текущим CMS-пакетам нашёл только потребителей нового
+`Besnovatyj\File\widgets\CkeditorCustomWidget`; старый namespace встречается лишь в `yii2-cms-file-before` и заметках.
+Для кода внутри данного workspace практическая совместимость подтверждена, но внешних потребителей это не исключает.
+
 Рекомендация: выполнить ограниченный поиск потребителей, добавить deprecated bridge-классы на один релиз или выпустить
 semver major с migration guide.
 
@@ -265,7 +276,9 @@ PHP-пакеты зависят от committed `dist`, что нормально
 
 ### P2. Документация пакетов недостаточна
 
-У core есть полезный README, но README плагинов почти пустые и не описывают:
+У core есть полезный README, а README `ckeditor5-filemanager` уже описывает назначение, экспорт и общую схему сборки.
+Однако он содержит устаревшую ссылку на `file:`-зависимость, а README `ckeditor5-codemirror` по-прежнему состоит только
+из ссылок на темы. В совокупности документация пакетов не описывает:
 
 - совместимые версии CKEditor;
 - npm и Composer способы установки;
@@ -341,10 +354,11 @@ extraction от ошибок новой реализации.
 
 ## Приоритетный план доведения до готовности
 
-1. ✅ Исправить генерацию и публикацию `.d.ts` во всех трёх npm-пакетах.
+1. ⚠️ Частично: `.d.ts` созданы и закоммичены, но нужно убрать `@/` из публичных declarations, починить обычный typecheck
+   `ckeditor5-codemirror` и включить types в единый build/prepublish pipeline.
 2. ✅ Убрать `file:../../npm/filemanager-core` из публикуемого манифеста.
 3. ✅ Выровнять CKEditor на одной major/minor линии и пересобрать оба плагина.
-4. Синхронизировать `rename`, `upload`, `move`, delete error items и прочие DTO между PHP и TypeScript.
+4. ⚠️ Частично: upload синхронизирован; остаются `rename`, `move`, delete error items, `analyze.exif` и directory meta.
 5. Исправить lifecycle listeners и убрать доступ к private `bus`.
 6. Добавить contract tests backend API и consumer typecheck из tarball.
 7. Определить границу `yii2-cms-file`: backend-only или интеграционный пакет; при backend-only вынести compatibility
@@ -356,25 +370,31 @@ extraction от ошибок новой реализации.
 
 Успешно:
 
-- `yii2-cms-ckeditor5`: TypeScript `tsc --noEmit` проходит;
 - `filemanager-core`: TypeScript `tsc --noEmit` проходит;
+- `ckeditor5-filemanager`: TypeScript `tsc --noEmit` проходит;
+- подтверждено наличие tracked `.d.ts` во всех трёх npm-пакетах;
+- подтверждена единая линия CKEditor `48.2.0` в манифестах и lock-файлах;
+- подтверждена npm-зависимость `@besnovatyj/filemanager-core: ^1.0.0` вместо `file:`;
 - проверены фактические ESM imports в собранных plugin bundles: `ckeditor5` оставлен external и должен резолвиться
   import map;
-- проверен состав tracked `dist`: declaration-файлы действительно отсутствуют;
 - сопоставлены PHP controller/service responses и TypeScript ports/DTO;
 - рабочие деревья анализируемых Git-репозиториев до создания этого отчёта были чистыми.
 
 Не прошло:
 
-- `ckeditor5-filemanager`: `tsc --noEmit` завершается с `TS7016` из-за отсутствующего `dist/standalone.d.ts` у core.
+- `ckeditor5-codemirror`: `tsc -p tsconfig.json --noEmit` завершается с `TS5069` из-за сочетания
+  `emitDeclarationOnly: true` без `declaration` при обычном typecheck;
+- публичные declarations `filemanager-core` содержат внутренние `@/`-импорты и не являются самодостаточными для
+  стандартного npm consumer.
 
 Не удалось проверить:
 
 - PHP syntax/lint и `composer validate`, потому что в текущем host-окружении нет команд `php` и `composer`;
 - end-to-end работу в браузере и Yii2 runtime;
-- реальную установку из публичных registries, поскольку разработка использует локальные path/file dependencies;
-- полный поиск внешних потребителей старых namespace из-за ошибок чтения части большого workspace; совместимость
-  подтверждена только по структуре самих анализируемых пакетов.
+- `npm pack --dry-run` и consumer typecheck из tarball: среда анализа не позволила создать npm cache во временной
+  директории;
+- реальную установку из публичных registries;
+- поиск потребителей старых namespace вне текущего workspace.
 
 ## Итоговая оценка
 
@@ -384,7 +404,7 @@ extraction от ошибок новой реализации.
 - **Независимая локальная разработка:** в основном работает.
 - **Качество публичных npm-контрактов:** недостаточное.
 - **Готовность к публикации/стабильному `1.0.0`:** нет.
-- **Общая оценка текущего результата:** примерно **7/10 по архитектуре** и **4/10 по release readiness**.
+- **Общая оценка текущего результата:** примерно **7/10 по архитектуре** и **5/10 по release readiness**.
 
 Главный вывод: разделять именно так было разумно. Делать это лучше следовало через сначала механическое выделение и
 тестирование контрактов, затем отдельный рефакторинг. Сейчас не требуется возвращаться к монолиту; требуется завершить

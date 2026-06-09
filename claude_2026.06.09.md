@@ -1,0 +1,206 @@
+# Анализ состояния `yii2-cms-file` и проверка сопроводительных .md (Claude, 2026-06-09)
+
+Проверены: исходники `yii2-cms-file/src/`, соседние пакеты (`npm/filemanager-core`,
+`ckeditor5-filemanager`, `ckeditor5-codemirror`, `yii2-cms-ckeditor5`, `yii2-cms-file-manager`),
+старое состояние `yii2-cms-file-before`, корневой `app/composer.json`, а также заметки:
+`TODO.md`, `curried-doodling-llama.md`, `adaptive-scribbling-pixel.md`,
+`adaptive-scribbling-pixel_upd.md`, `codex-analysis.md`.
+
+---
+
+## 1. Краткий вывод
+
+Текущее состояние исходников — **рабочая, архитектурно правильная декомпозиция с завершённым
+переходом на Flysystem**, но с незакрытыми хвостами уровня release engineering (контракты DTO,
+lifecycle фронтенда, error mapping, документация). Я в целом **согласен с codex-analysis.md** —
+это самый точный из пяти документов; все его ключевые фактические утверждения, которые я проверил
+по коду, подтвердились (см. §4). Самый устаревший документ — `TODO.md` (см. §3.2).
+
+Моя оценка совпадает с codex по порядку величины: архитектура ~7–8/10, готовность к публикации
+как независимых пакетов ~5/10.
+
+---
+
+## 2. Моя оценка исходников `yii2-cms-file` (текущее состояние)
+
+### 2.1. Что сделано хорошо
+
+- **Слой `src/storage/` — главное достижение.** `VirtualPath` (первый рубеж: запрет `..`, NUL,
+  `\`), `StorageMount` (value object), `StorageMountFactory` (единственное место, знающее об
+  адаптерах), `MountRegistry`, `StorageManager` (фасад). Ответственности разделены чисто, добавление
+  FTP/SFTP действительно сведётся к одной ветке `match`.
+- **Traversal закрыт системно.** Сравнение со старым кодом (`yii2-cms-file-before`) подтверждает:
+  там `getFolderDto`/`createDir`/`uploadFile` склеивали `realRoot . $path` без confine (строки
+  38/190/368), защита была только в delete/move-source/rename. Теперь все операции идут через
+  Flysystem (нормализация + `PathTraversalDetected`) поверх `VirtualPath::parse()`. Рассинхрон
+  защиты устранён архитектурно, а не точечными заплатками — правильное решение.
+- `FileManagerService` стал адаптеро-независимым и компактным (492 строки против ~800 у старого),
+  upload — потоковый (`writeStream`), метаданные синтезируются осмысленно (visibility → POSIX-mode).
+- DI через `container.php` + `Module::setContainerConfig()` — декларативно, mounts с защитой от
+  «битых» регистраций (zip — только при наличии файла, S3 — только при key+bucket).
+- S3-параметры через модуль настроек (`options.php` → `params.s3`) с поддержкой S3-совместимых
+  (endpoint, path-style) — соответствует принятой в проекте схеме конфигурирования.
+- BC-виджет `Besnovatyj\File\widgets\CkeditorCustomWidget` — корректный тонкий шим (только
+  преднастройка `$plugins`).
+
+### 2.2. Проблемы, которые я нашёл сам (в заметках не отмечены или отмечены неточно)
+
+1. **Устаревшие PHPDoc-ссылки на удалённый `StorageMount::path()`** — в трёх местах:
+   `FileManagerController.php:24`, `VirtualPath.php:23` («Второй рубеж — StorageMount::path()
+   (realpath + confine)»), `PathTraversalException.php:13`. Метод убран при переходе на Flysystem
+   (о чём прямо написано в самом `StorageMount.php:25-26`), но соседние докблоки описывают
+   несуществующий контракт. Это ровно тот «comment rot», который дезориентирует при чтении.
+2. **`rename()`: `oldName` не валидируется как одиночный сегмент.** `parentPath` проходит
+   `VirtualPath::parse()`, `newName` — `sanitizeName()`, а `oldName` склеивается в путь сырым
+   (`FileManagerService.php:255`). Передав `oldName = "sub/file.txt"`, можно оперировать объектом
+   вне заявленной родительской директории (в пределах mount — Flysystem конфайнит, `..` он
+   отвергнет). Не дыра, но нарушение семантики контракта «имя в директории». Аналогично стоит
+   проверить отсутствие `/` в `name` у `createDir` до `sanitizeName` (sanitize заменит `/` на `_`,
+   так что фактически закрыто, но неявно).
+3. **Неконсистентные типы исключений**: `getFolderDto` бросает `yii\base\InvalidArgumentException`,
+   остальные методы — `DomainException`, контроллёр всё равно превращает всё в 500. При будущем
+   error mapping это придётся унифицировать.
+4. **`composer.json`**: placeholder `"email": "your-email@example.com"`; захардкоженное поле
+   `"version": "1.0.0"` (при доставке через git-теги его лучше убрать — классический источник
+   рассинхрона тег↔манифест).
+5. Мелочи: `sua()` — мёртвый `if (true)` (известная заглушка, TODO стоит); `getConfigDto()` отдаёт
+   `fileMaxSize: ''` при заявленном на фронте `string|null`; для zip-mount `url()` с `baseUrl=''`
+   даёт относительные URL (известно, отмечено в `_upd` §5 как отдельная задача
+   download-эндпоинта).
+
+### 2.3. Подтверждаю проблемы, отмеченные в заметках и всё ещё актуальные
+
+- **Любая ошибка → HTTP 500.** Во всех action `BadRequestHttpException` (проверки `isRoot()`,
+  cross-mount move) бросаются **внутри** `try`, и общий `catch (Throwable)` заворачивает их в
+  `ServerErrorHttpException`. Единственный корректный 400 — отсутствие `path` в `actionList`
+  (он вне try). Подтверждаю P1 из codex.
+- **Утечка внутренних сообщений**: `ServerErrorHttpException($e->getMessage())` повсюду — текст
+  доменных исключений (включая пути внутри mount) уходит клиенту в проде. Осознанно отложено
+  (`_upd` §2.5), но фиксирую: после перехода на Flysystem абсолютных путей ФС в сообщениях больше
+  нет, утекают только относительные/виртуальные — серьёзность снизилась с «высоко» до «средне».
+- **AuthZ только глобальный `as access`**, в пакете нет `behaviors()`/RBAC — отложено, актуально.
+- **Upload без контентной валидации** — осознанное решение (битые MIME у легитимных изображений),
+  зафиксировано в memory проекта и в коде комментарием. Не считаю дефектом текущей стадии, но
+  напомню: `.php/.svg/.html` на статик-домен — это хранимый XSS/RCE-вектор, и `UploadPolicy`
+  остаётся самым важным незакрытым security-пунктом бэкенда.
+
+---
+
+## 3. Корректность .md-файлов
+
+### 3.1. `curried-doodling-llama.md` (план разнесения) — корректен, реализован
+
+План соответствует фактической структуре пакетов: ядро в `app/packages/npm/filemanager-core`,
+адаптер/codemirror/редактор — отдельные dual-пакеты, `yii2-cms-file` зависит от трёх composer-пакетов
+(плюс появившийся `yii2-cms-file-manager`, которого в плане R1–R5 не было). Раздел «Работа с
+репозиториями» уже исполнен дальше, чем там написано: `file:`-зависимость заменена на `^1.0.0`,
+и lock адаптера ссылается на **реальный tarball registry.npmjs.org с integrity-хэшем** — т.е.
+`@besnovatyj/filemanager-core@1.0.0` фактически опубликован в npm (план это описывал как «после
+публикации»).
+
+TODO:
+
+1) Опционально `.gitattributes` `export-ignore` на `src/`, `node_modules`, `assets/`, `*.map` в R2/R3/R4 —
+   чтобы composer-архив пакета был лёгким (только dist + PHP).
+2) Прод/CI-сборка R2: npm-зависимость на R1 через git-URL (`"@besnovatyj/filemanager-core":
+  "github:besnovatyj/filemanager-core#v1.2.0"`) — без npm-registry.
+3) В `app/composer.json` добавить `repositories` `type:vcs` для трёх пакетов (готовый блок —
+   в `app/composer.md`). Делать ТОЛЬКО после создания репозиториев.
+4) Ядро `@besnovatyj/filemanager-core` — npm-only пакет (своего composer-репо НЕ требует). Для
+   прод/CI-сборки адаптера зависимость на ядро через git-URL
+   (`"@besnovatyj/filemanager-core": "github:besnovatyj/filemanager-core#v1.0.0"`); локально — `file:`.
+   Адаптер вбандливает ядро в свой `dist/index.js`, поэтому отдельный composer-пакет для ядра не нужен.
+
+R1 — `filemanager-core` (npm-библиотека)  
+R2 — `ckeditor5-filemanager` (адаптер, npm + composer)  
+R3 — `ckeditor5-codemirror` (npm + composer)  
+R4 — `besnovatyj/yii2-cms-ckeditor5` (пакет редактора)  
+R5 — `besnovatyj/yii2-cms-file`
+
+### 3.2. `TODO.md` (срез 2026-06-01) — самый устаревший документ, требует актуализации
+
+Переименовал в `NPM+GIT.md`, удалил всё, кроме справки по подключению NPM пакетов напрямую из GitHub, так как все пункты
+по разделению монолитного модуля были выполнены
+
+### 3.3. `adaptive-scribbling-pixel.md` (анализ безопасности) — был точен, теперь историчен
+
+Сверил ключевые находки со старым кодом `yii2-cms-file-before` — **ссылки на строки и суть
+совпадают** (голый `realRoot . $path` в `getFolderDto:38`, `createDir:190`, `uploadFile:368`;
+realpath-confine только в delete/move-source/rename). Анализ был качественным и честным.
+Сейчас документ описывает уже не существующий код (сервис переписан), но целевая архитектура из
+его §4 (VirtualPath, StorageManager/MountRegistry, Flysystem, mount в адресации) реализована
+практически дословно. Статус «исходный аналитический документ, не изменяется» — корректен.
+
+### 3.4. `adaptive-scribbling-pixel_upd.md` (срез 2026-06-04) — точен почти полностью
+
+- ✅ §2.1/2.4 (traversal/confine закрыты Flysystem + VirtualPath) — подтверждаю по коду.
+- ✅ §2.2/2.5/2.6/2.9 «отложено осознанно» — статусы верны и сегодня.
+- ✅ §3.1 — пустой `path` принят: `FileEntity.setPath`/`FolderEntity.setPath` проверяют только
+  `typeof === 'string'`, с поясняющими комментариями.
+- ✅ §3.2 — `throw` в `UploadService.upload` действительно закомментирован.
+- ✅ §4 — таблица слоя `storage/` соответствует файлам один в один; composer-зависимости добавлены.
+- ⚠️ §5 (миграция): «`fmDefaultPath` редактора `'/demo'` — поправить на `'/'` или `'/static'`» —
+  **до сих пор не поправлено**: в `yii2-cms-ckeditor5/src/CkeditorCustomWidget.php` по-прежнему
+  `public string $fmDefaultPath = '/demo'`. У standalone-виджета `yii2-cms-file-manager` — `'/'` (ок).
+  Пункт остаётся открытой задачей, документ это и предсказывал.
+
+### 3.5. `codex-analysis.md` — подтверждаю; точность высокая
+
+Проверил по коду каждое значимое фактическое утверждение:
+
+| Утверждение codex                                                              | Моя проверка                                                                                                                                                                                                                                                       |
+|--------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| P0: `@/`-импорты в публичных `dist/*.d.ts` core                                | ✅ Подтверждено: `dist/standalone.d.ts` — все 7 экспортов через `@/...`; алиас живёт только в tsconfig core. Для стороннего consumer types непереносимы.                                                                                                            |
+| `prepublishOnly` есть только у core                                            | ✅ Подтверждено (у адаптера и codemirror — нет).                                                                                                                                                                                                                    |
+| codemirror: `tsc --noEmit` падает с TS5069                                     | ✅ Подтверждено конфигом: `declaration: false` + `emitDeclarationOnly: true` в tsconfig.                                                                                                                                                                            |
+| `file:` заменён на `^1.0.0`, lock → npm tarball                                | ✅ Подтверждено (resolved: registry.npmjs.org + integrity).                                                                                                                                                                                                         |
+| README адаптера всё ещё про `file:../../npm/filemanager-core`                  | ✅ Подтверждено (`readme.md:20`).                                                                                                                                                                                                                                   |
+| CKEditor выровнен на `^48.2.0` во всех трёх пакетах                            | ✅ Подтверждено.                                                                                                                                                                                                                                                    |
+| P1: `rename` — фронт ждёт `{path, item: DirDto}`, PHP отдаёт одиночный FileDto | ✅ Подтверждено. Нюанс, которого нет у codex: фронт фактически использует **только `res.path`** (`RenameFeature` → `nav:refresh`), а поле `path` в PHP FileDto есть — поэтому в рантайме работает «случайно». `res.item` нигде не читается. Тип лжёт, но не падает. |
+| P1: `move(): Promise<void>` vs `{status:'ok'}`                                 | ✅ Подтверждено (структурно безвредно, но wire-format объявлен неверно).                                                                                                                                                                                            |
+| P1: failed-элементы `delete` без обязательного `type`                          | ✅ Подтверждено: обе ветки ошибок в `deletePaths()` не кладут `type`, а `DeleteResponseDto` требует `'file'\|'folder'`.                                                                                                                                             |
+| P1: `analyze.exif: null` vs `exif?: Record<string,string>`                     | ✅ Подтверждено (PHP: `'exif' => null`).                                                                                                                                                                                                                            |
+| P1: meta директорий — сокращённый FolderMetaDto внутри заявленного FileDto     | ✅ Подтверждено: `dirMeta()` отдаёт 4 поля без `isWritable/isReadable/isExecutable/dimensions`.                                                                                                                                                                     |
+| P1: клиентские ошибки → HTTP 500                                               | ✅ Подтверждено (см. §2.3).                                                                                                                                                                                                                                         |
+| P1: `AppRuntime.destroy()` не снимает window-listeners                         | ✅ Подтверждено (`addEventListener` в `setupGlobalErrorBoundary`, TODO на строке 108, в `destroy()` снятия нет).                                                                                                                                                    |
+| P1: утечки `bind(this)`                                                        | ✅ Подтверждено в `DirectoryContentFeature` (add/remove с разными результатами `bind`) и в `SplitPanelWC` (`handleResize` — уже arrow-property, но подписка через лишний `.bind(this)` → `removeEventListener(this.handleResize)` снимает не то).                   |
+| P1: подписки `navState`/`registry`/`selectionStore` не сохраняются для отписки | ✅ Подтверждено: в `unsubs` уходит только `viewModeStore`; три подписки (строки 47/52/67) теряются → уничтоженная feature продолжает рендерить.                                                                                                                     |
+| P2: адаптер лезет в приватный `runtime['bus']`                                 | ✅ Подтверждено (`ckeditor5-filemanager/src/index.ts:93,319`).                                                                                                                                                                                                      |
+| P2: `yii2-cms-file` тянет редактор и оба плагина                               | ✅ Подтверждено + он ещё тянет `yii2-cms-file-manager` (codex это не упомянул). Согласен с рекомендацией «вариант 1» (вынести интеграционный пакет), но это вопрос приоритета, не корректности.                                                                     |
+| P2: дубли в корневом `app/composer.json`                                       | ✅ Подтверждено (ckeditor5, оба плагина, file, file-manager перечислены наряду с yii2-cms-file).                                                                                                                                                                    |
+| P2: старый namespace потребителей в workspace нет                              | ✅ Подтверждено grep'ом.                                                                                                                                                                                                                                            |
+
+Расхождений с кодом в codex-analysis.md я **не нашёл**. Единственные уточнения: (а) нюанс про
+`rename` выше — серьёзность чуть ниже заявленной, это типовая, а не рантайм-поломка; (б) масштаб
+«lifecycle-утечек» ограничен сценарием многократного открытия/закрытия ФМ в одной сессии админки —
+для текущего использования это деградация, а не критический дефект; для публичной библиотеки —
+согласен, надо закрывать. Итоговые оценки codex (границы пакетов — хорошо; release readiness —
+нет) разделяю.
+
+---
+
+## 4. Сводный статус и приоритеты (моя редакция)
+
+Что я бы закрывал в первую очередь, объединяя остатки всех документов:
+
+1. **Error handling в `FileManagerController`** (быстро, дёшево): валидации `isRoot()`/cross-mount —
+   до `try`; в `catch` — отдельный проброс `HttpException`; перестать отдавать `getMessage()`
+   наружу (маппинг доменных исключений → безопасные сообщения; `PathTraversalException`/
+   `UnknownMountException` → 400/404). Это одновременно закрывает 500-вместо-400 и утечку сообщений.
+2. **Стейл-докблоки `StorageMount::path()`** (3 файла) + валидация `oldName` как одиночного
+   сегмента в `rename` — точечные правки.
+3. **Frontend lifecycle** (`AppRuntime` window-listeners, `bind()`-пары, потерянные подписки в
+   `DirectoryContentFeature`) + публичный `close()` в runtime вместо `['bus']`.
+4. **Синхронизация DTO** (`rename`, `move`, delete-failures `type`, `exif`, dir-meta) — лучше
+   одним заходом с фиксацией контракта (хотя бы общие fixtures).
+5. **Публикуемость types ядра**: убрать `@/` из declarations (tsconfig.build с переписыванием
+   путей или bundled d.ts), единый build+types pipeline, `prepublishOnly` у всех трёх npm-пакетов;
+   поправить README адаптера (упоминание `file:`).
+6. **Актуализировать `TODO.md`** (или пометить его «исторический»): пункты про BC-namespace,
+   страховку `media/` и «предстоит сборка» больше не соответствуют коду и будут путать при
+   следующем заходе.
+7. Дальше по плану: `UploadPolicy`, пакетный RBAC, download-эндпоинт для zip/непубличных mount,
+   `fmDefaultPath` `/demo` → `/static`, GitHub-доставка (vcs-блок).
+
+Пункты 1–2 — внутри `yii2-cms-file` и не требуют пересборки фронта; 3–5 — в npm-пакетах с
+пересборкой dist.
