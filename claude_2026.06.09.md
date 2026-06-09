@@ -186,8 +186,9 @@ realpath-confine только в delete/move-source/rename). Анализ был
    `DomainException` → 422 с сообщением; прочее → 500 с нейтральным текстом, детали в лог.
 2. ✅ СДЕЛАНО (шаг 3). **Стейл-докблоки `StorageMount::path()`** (3 файла) + валидация `oldName`
    как одиночного сегмента в `rename`.
-3. **Frontend lifecycle** (`AppRuntime` window-listeners, `bind()`-пары, потерянные подписки в
-   `DirectoryContentFeature`) + публичный `close()` в runtime вместо `['bus']`.
+3. **Frontend lifecycle**: ✅ `AppRuntime` window-listeners (шаг 4); далее — `bind()`-пары,
+   потерянные подписки в `DirectoryContentFeature` (шаг 5) и публичный `close()` в runtime
+   вместо `['bus']` (шаг 6).
 4. **Синхронизация DTO** (`rename`, `move`, delete-failures `type`, `exif`, dir-meta) — лучше
    одним заходом с фиксацией контракта (хотя бы общие fixtures).
 5. **Публикуемость types ядра**: убрать `@/` из declarations (tsconfig.build с переписыванием
@@ -222,3 +223,9 @@ realpath-confine только в delete/move-source/rename). Анализ был
   `FileManagerService::rename()`: `oldName` валидируется хелпером `assertSingleSegment()`
   (запрет `/`, `\`, NUL, `.`/`..`, пустого имени) — имя обязано быть одиночным сегментом внутри
   `parentPath`, а не путём.
+- **Шаг 4** (`npm/filemanager-core`): `AppRuntime` — window-listeners error boundary
+  (`error`, `unhandledrejection`) вынесены в стабильные поля-стрелки и снимаются в `destroy()`
+  (закрыт TODO на строке 108); `destroy()` стал идемпотентным (флаг `destroyed`) — его вызывают
+  и обработчик `fm:close`, и внешний владелец (CKEditor-адаптер), раньше это давало двойной
+  `widget.destroy()`. ⚠️ Требуется пересборка dist ядра и адаптера (адаптер бандлит ядро);
+  разумно сделать один раз после шагов 5–6.
