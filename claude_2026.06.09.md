@@ -565,3 +565,41 @@ export interface BackendCapabilities {
   — синхронный билдер URL (`<connector>/download?path=...`), геттер `HttpClient.baseUrl`.
   Дополняет семантику `FileDto.url: null`. UI-фича «Скачать» (контекстное меню) — следующая
   отдельная задача; контракт готов.
+
+---
+
+## 7. План оставшегося (работа по ФМ на паузе с 2026-06-09)
+
+Шаги 1–12 выполнены (см. §6). Перед возобновлением — перечитать §5 (контракты, парадигма
+TS-first) и §5.5 (batch/capabilities-решения). Остаток по убыванию приоритета:
+
+1. **Пересборка/публикация ядра и адаптера** (хвост шагов 11–12): в core накопились изменения
+   контракта (`blockedExtensions`, `DownloadRequest`/`getDownloadUrl`, `HttpClient.baseUrl`) —
+   `npm run build` + `npm run types`, bump версии, publish; обновить зависимость в адаптере.
+2. **Пакетный RBAC** (`yii2-cms-file`): `behaviors()` в контроллёрах + permissions
+   read/write/delete — defense-in-depth к глобальному `as access`; без него пакет вне этого
+   backend открыт (§2.3, codex 2.6).
+3. **UI-фича «Скачать»** (`filemanager-core`): пункт контекстного меню для файлов с
+   `url: null` (и вообще для всех) через готовый `IFileManagerBackend.getDownloadUrl()` —
+   навигация `<a href>`, не XHR.
+4. **Потребление `getConfig()` фронтендом**: дернуть при старте, применить
+   `upload.maxFileSize`/`blockedExtensions` как UX-проверки до отправки, `publicUrls`/`readOnly`
+   по mount — дизейбл недоступных действий (§5.5 п.3; enforcement остаётся на сервере).
+5. **MIME/контент-валидация** — новое правило `UploadRuleInterface` в конвейере UploadPolicy
+   (finfo по tempName; решение «битые MIME у легитимных изображений» учесть allowlist'ом
+   с мягким режимом). Туда же при необходимости: санитизация SVG, лимиты размеров изображений.
+6. **SUA-коннектор** (`sua()` — заглушка): реализовать по образцу `uploadFile()`,
+   ОБЯЗАТЕЛЬНО через ту же `UploadPolicy`; вернуть CKEditor `{url}`.
+7. **Batch-операции на фронте** (§5.5 п.2): `BatchOperationFeature` — клиентская очередь
+   per-item вызовов (паттерны: `UploadService.uploadStatus`, `DeleteResult`); серверные
+   batch-эндпоинты НЕ делать.
+8. **GitHub-доставка**: создать репозитории пакетов, теги с dist, vcs-блок в
+   `app/composer.json` (заготовка — `app/composer.md`); до этого пакеты едут через локальный
+   path-репозиторий.
+9. **Хвосты codex P2** (по желанию): разделение `yii2-cms-file` на backend-only +
+   интеграционный пакет (`yii2-cms-file-ckeditor5`); чистка дублей в корневом
+   `app/composer.json`; contract fixtures для DTO (runtime-валидация ответов — §5.2 п.2);
+   `composer.json` пакета — placeholder email и захардкоженное поле `version` (§2.2 п.4).
+10. **RenameFeature**: начать читать новые поля отчёта (`newName` после санитизации —
+    показать пользователю фактическое имя; `item` — обновить registry без повторного list);
+    аналогично `upload.item` → оптимистичное обновление `FolderRegistry`.
