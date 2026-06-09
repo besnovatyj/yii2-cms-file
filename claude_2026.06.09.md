@@ -191,9 +191,9 @@ realpath-confine только в delete/move-source/rename). Анализ был
    публичный `close()` в runtime вместо `['bus']` (шаг 6). Остаётся пересборка dist.
 4. **Синхронизация DTO** (`rename`, `move`, delete-failures `type`, `exif`, dir-meta) — принята
    парадигма «TypeScript-first», детальный пооперационный разбор и план — в §5.
-5. **Публикуемость types ядра**: убрать `@/` из declarations (tsconfig.build с переписыванием
-   путей или bundled d.ts), единый build+types pipeline, `prepublishOnly` у всех трёх npm-пакетов;
-   поправить README адаптера (упоминание `file:`).
+5. **Публикуемость types ядра**: ✅ `@/` из declarations убирается `tsc-alias` (шаг 8);
+   остаётся: TS5069 у `ckeditor5-codemirror`, `prepublishOnly` у адаптера и codemirror,
+   README адаптера (упоминание `file:`).
 6. ✅ СДЕЛАНО (пользователем): `TODO.md` переименован в `NPM+GIT.md`, выполненные пункты удалены.
 7. Дальше по плану: `UploadPolicy`, пакетный RBAC, download-эндпоинт для zip/непубличных mount,
    `fmDefaultPath` `/demo` → `/static`, GitHub-доставка (vcs-блок).
@@ -517,3 +517,12 @@ export interface BackendCapabilities {
   Попутный релакс в core: `FileEntity.url: string|null`, `setUrl` принимает `null` и нормализует
   `''` → `null` (валидатор противоречил собственному контракту FileDto.url; потребители
   null-терпимы: `IconHelper`, `PropertiesFeature`, CKEditor-адаптер).
+- **Шаг 7в** (пользователь): dist ядра и адаптера пересобраны, версия core поднята (1.0.2),
+  проверка в браузере — всё работает.
+- **Шаг 8** (`npm/filemanager-core`, коммит `b9f237e`): переносимость публичных declarations.
+  В скрипт `types` после `tsc` добавлен `tsc-alias -p tsconfig.json` — переписывает `@/`-импорты
+  (28 файлов + 2 с `import("@/...")`) на относительные пути прямо в `dist`. Алиасы из tsconfig
+  не являются контрактом установленного npm-пакета — для стороннего consumer'а `types` был
+  неразрешим (P0 codex). `prepublishOnly` уже вызывает `types` — publish покрыт. Ambient-модули
+  scss/svg в declarations не протекают (проверено). Требуется: `npm install` (подтянет
+  `tsc-alias@^1.8.16`) + `npm run types`, контроль: `grep -r "@/" dist --include=*.d.ts` пуст.
