@@ -20,7 +20,8 @@ use Besnovatyj\File\storage\exceptions\PathTraversalException;
  *
  * Здесь же — первый рубеж защиты от Directory Traversal: запрещены сегмент `..`, NUL-байт и
  * обратный слеш. Итоговый `relative` — путь ВНУТРИ точки монтирования относительно её корня
- * (с ведущим слешем, либо '' для корня). Второй рубеж — {@see StorageMount::path()} (realpath + confine).
+ * (с ведущим слешем, либо '' для корня). Второй рубеж — сам Flysystem: его PathNormalizer
+ * нормализует путь и бросает `PathTraversalDetected` при выходе за корень адаптера.
  */
 final class VirtualPath
 {

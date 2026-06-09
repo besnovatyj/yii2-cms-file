@@ -26,8 +26,9 @@ use yii\web\UnprocessableEntityHttpException;
  *
  * Фронтенд оперирует ВИРТУАЛЬНЫМИ путями `/{mountId}/{rel...}` (единая «как будто локальная» ФС;
  * реальные корни скрыты). Контроллёр разбирает их через {@see VirtualPath} и делегирует
- * {@see StorageManager}, который отдаёт сервис нужной точки монтирования. Сам обход каталога
- * исключён на уровне {@see \Besnovatyj\File\storage\StorageMount::path()}.
+ * {@see StorageManager}, который отдаёт сервис нужной точки монтирования. Обход каталога исключён
+ * двумя рубежами: {@see VirtualPath::parse()} (запрет `..`/NUL/`\`) и самим Flysystem
+ * (нормализация путей внутри адаптера).
  */
 class FileManagerController extends Controller
 {

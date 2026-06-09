@@ -245,6 +245,10 @@ class FileManagerService
 
     public function rename(string $path, string $oldName, string $newName): array
     {
+        // oldName — ИМЯ внутри $path, а не путь: запрещаем разделители и спецсегменты, иначе клиент
+        // мог бы оперировать объектами вне заявленной родительской директории (в пределах mount).
+        $this->assertSingleSegment($oldName);
+
         $safeNewName = $this->sanitizeName($newName);
         if ($safeNewName === '') {
             throw new DomainException('New name is empty or invalid.');
@@ -367,6 +371,20 @@ class FileManagerService
     }
 
     // ======= ХЕЛПЕРЫ =======
+
+    /**
+     * Проверяет, что значение — одиночное имя файла/директории (один сегмент пути),
+     * а не путь: без '/', '\', NUL-байта и спецсегментов '.'/'..'.
+     */
+    private function assertSingleSegment(string $name): void
+    {
+        if (
+            $name === '' || $name === '.' || $name === '..'
+            || str_contains($name, '/') || str_contains($name, '\\') || str_contains($name, "\0")
+        ) {
+            throw new DomainException('Некорректное имя: ожидается имя файла/директории без разделителей пути.');
+        }
+    }
 
     private function sanitizeName(string $name): string
     {

@@ -45,18 +45,15 @@ lifecycle фронтенда, error mapping, документация). Я в ц
 
 ### 2.2. Проблемы, которые я нашёл сам (в заметках не отмечены или отмечены неточно)
 
-1. **Устаревшие PHPDoc-ссылки на удалённый `StorageMount::path()`** — в трёх местах:
-   `FileManagerController.php:24`, `VirtualPath.php:23` («Второй рубеж — StorageMount::path()
-   (realpath + confine)»), `PathTraversalException.php:13`. Метод убран при переходе на Flysystem
-   (о чём прямо написано в самом `StorageMount.php:25-26`), но соседние докблоки описывают
-   несуществующий контракт. Это ровно тот «comment rot», который дезориентирует при чтении.
-2. **`rename()`: `oldName` не валидируется как одиночный сегмент.** `parentPath` проходит
-   `VirtualPath::parse()`, `newName` — `sanitizeName()`, а `oldName` склеивается в путь сырым
-   (`FileManagerService.php:255`). Передав `oldName = "sub/file.txt"`, можно оперировать объектом
-   вне заявленной родительской директории (в пределах mount — Flysystem конфайнит, `..` он
-   отвергнет). Не дыра, но нарушение семантики контракта «имя в директории». Аналогично стоит
-   проверить отсутствие `/` в `name` у `createDir` до `sanitizeName` (sanitize заменит `/` на `_`,
-   так что фактически закрыто, но неявно).
+1. ✅ ИСПРАВЛЕНО (шаг 3): **Устаревшие PHPDoc-ссылки на удалённый `StorageMount::path()`** — были
+   в трёх местах (`FileManagerController`, `VirtualPath`, `PathTraversalException`). Докблоки
+   переписаны на фактическую модель: первый рубеж — `VirtualPath::parse()`, второй — сам Flysystem
+   (`PathNormalizer` → `PathTraversalDetected`).
+2. ✅ ИСПРАВЛЕНО (шаг 3): **`rename()`: `oldName` не валидировался как одиночный сегмент** —
+   склеивался в путь сырым, `oldName = "sub/file.txt"` позволял оперировать объектом вне заявленной
+   родительской директории (в пределах mount — Flysystem конфайнит). Добавлен хелпер
+   `assertSingleSegment()` (запрет `/`, `\`, NUL, `.`/`..`, пустого имени) → `DomainException` (422).
+   У `createDir` имя фактически закрыто `sanitizeName` (заменяет `/` на `_`).
 3. ✅ ИСПРАВЛЕНО (шаг 2): **Неконсистентные типы исключений**: `getFolderDto` бросал
    `yii\base\InvalidArgumentException`, остальные методы — `DomainException`. Унифицировано на
    `DomainException` вместе с введением error mapping в контроллёре.
@@ -187,8 +184,8 @@ realpath-confine только в delete/move-source/rename). Анализ был
 1. ✅ СДЕЛАНО (шаги 1–2). **Error handling в `FileManagerController`**: валидации `isRoot()`/
    cross-mount — до `try`; `PathTraversalException`/`UnknownMountException` → 400/404;
    `DomainException` → 422 с сообщением; прочее → 500 с нейтральным текстом, детали в лог.
-2. **Стейл-докблоки `StorageMount::path()`** (3 файла) + валидация `oldName` как одиночного
-   сегмента в `rename` — точечные правки.
+2. ✅ СДЕЛАНО (шаг 3). **Стейл-докблоки `StorageMount::path()`** (3 файла) + валидация `oldName`
+   как одиночного сегмента в `rename`.
 3. **Frontend lifecycle** (`AppRuntime` window-listeners, `bind()`-пары, потерянные подписки в
    `DirectoryContentFeature`) + публичный `close()` в runtime вместо `['bus']`.
 4. **Синхронизация DTO** (`rename`, `move`, delete-failures `type`, `exif`, dir-meta) — лучше
@@ -218,3 +215,10 @@ realpath-confine только в delete/move-source/rename). Анализ был
   (унификация доменных ошибок, иначе «директория не существует» стала бы нейтральным 500).
   Контракт для фронтенда: «не найдено/уже существует/некорректное имя» теперь приходят как 422
   с прежним текстом в `message`; нейтральный 500 — только для настоящих внутренних сбоев.
+- **Шаг 3** (`yii2-cms-file`): comment rot + контракт `rename`.
+  Переписаны три устаревших PHPDoc, ссылавшихся на удалённый `StorageMount::path()`
+  (`FileManagerController`, `VirtualPath`, `PathTraversalException`) — теперь описывают фактические
+  рубежи защиты (`VirtualPath::parse()` + Flysystem `PathNormalizer`).
+  `FileManagerService::rename()`: `oldName` валидируется хелпером `assertSingleSegment()`
+  (запрет `/`, `\`, NUL, `.`/`..`, пустого имени) — имя обязано быть одиночным сегментом внутри
+  `parentPath`, а не путём.
