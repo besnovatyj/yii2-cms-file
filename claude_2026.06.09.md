@@ -186,9 +186,9 @@ realpath-confine только в delete/move-source/rename). Анализ был
    `DomainException` → 422 с сообщением; прочее → 500 с нейтральным текстом, детали в лог.
 2. ✅ СДЕЛАНО (шаг 3). **Стейл-докблоки `StorageMount::path()`** (3 файла) + валидация `oldName`
    как одиночного сегмента в `rename`.
-3. **Frontend lifecycle**: ✅ `AppRuntime` window-listeners (шаг 4); ✅ `bind()`-пары и потерянные
-   подписки в `DirectoryContentFeature`/`SplitPanelWC` (шаг 5); далее — публичный `close()`
-   в runtime вместо `['bus']` (шаг 6).
+3. ✅ СДЕЛАНО (шаги 4–6). **Frontend lifecycle**: `AppRuntime` window-listeners (шаг 4);
+   `bind()`-пары и потерянные подписки в `DirectoryContentFeature`/`SplitPanelWC` (шаг 5);
+   публичный `close()` в runtime вместо `['bus']` (шаг 6). Остаётся пересборка dist.
 4. **Синхронизация DTO** (`rename`, `move`, delete-failures `type`, `exif`, dir-meta) — лучше
    одним заходом с фиксацией контракта (хотя бы общие fixtures).
 5. **Публикуемость types ядра**: убрать `@/` из declarations (tsconfig.build с переписыванием
@@ -237,3 +237,13 @@ realpath-confine только в delete/move-source/rename). Анализ был
   `handleResize` убран лишний `bind`; регистрация слушателей вынесена из-под guard'а `shadowRoot` —
   disconnect/connect симметричны (повторное подключение элемента к DOM восстанавливает слушатели).
   dist по-прежнему не пересобран (после шага 6).
+- **Шаг 6** (`npm/filemanager-core` `98d06cf` + `ckeditor5-filemanager` `6921d0e`): инкапсуляция
+  закрытия ФМ. В `AppRuntime` добавлен публичный `close(source = 'external')` — эмитит `fm:close`,
+  то есть проходит ту же единственную точку уничтожения, что крестик/Esc/overlay. Адаптер в обоих
+  местах переведён с `runtime['bus']` (доступ к private-полю строковым индексом) на
+  `runtime.close('select')`.
+  ⚠️ **Пересборка dist (шаги 4–6)**: адаптер typecheck'ается против установленного из npm
+  `filemanager-core@1.0.0`, в котором `close()` ещё нет. Порядок: (1) в core — `npm run build` +
+  `npm run types`, поднять версию (1.0.1) и опубликовать в npm (либо временно вернуть
+  `file:../../npm/filemanager-core` в адаптере); (2) в адаптере — обновить зависимость,
+  `npm install && npm run build` (+ `types`); (3) закоммитить dist обоих пакетов.
