@@ -1,46 +1,29 @@
 <?php
 
-
 /*
  * Copyright (c) 2026 Besnovatyj. Licensed under the MIT License.
  */
 
 namespace Besnovatyj\File;
 
-use common\components\module\BaseModule;
+use common\components\module\CmsModule;
+use modules\modmanNew\contract\DeclaresModule;
+use modules\modmanNew\contract\ProvidesAdminMenu;
+use modules\modmanNew\contract\ProvidesOptions;
 
-class Module extends BaseModule
+class Module extends CmsModule implements
+    DeclaresModule, ProvidesAdminMenu,
+    ProvidesOptions
 {
-    public const true EDITABLE = true;
+    public const bool EDITABLE = true;
+    public const string VERSION = '1.0.0';
+    public const string MODULE_ID = 'File';
 
-    public static function getAdminMenu(): array
-    {
-        return require __DIR__ . '/config/adminMenu.php';
-    }
-
-    public static function getConfig(): array
-    {
-        return require __DIR__ . '/config/config.php';
-    }
-
-    public static function getOptions(): array
-    {
-        return require __DIR__ . '/config/options.php';
-    }
-
-    public static function getDependencies(): array
-    {
-        return require __DIR__ . '/config/dependencies.php';
-    }
-
-    /**
-     * Регистрация DI слоя хранилищ (MountRegistry, StorageManager).
-     * Вызывается автоматически из {@see \common\components\module\BaseModule::init()}
-     * по наличию этого метода — поэтому контроллёры получают StorageManager через конструктор.
-     */
-    public static function setContainerConfig(): void
-    {
-        (require __DIR__ . '/config/container.php')(\Yii::$container);
-    }
+    public static function moduleId(): string { return self::MODULE_ID; }
+    public static function moduleVersion(): string { return self::VERSION; }
+    public static function isEditable(): bool { return self::EDITABLE; }
+    public static function adminMenu(): array { return require __DIR__.'/config/adminMenu.php'; }
+    public static function moduleConfig(): array { return require __DIR__.'/config/config.php'; }
+    public static function options(): array { return require __DIR__.'/config/options.php'; }
 
 }
