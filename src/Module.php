@@ -6,7 +6,7 @@
 
 namespace Besnovatyj\File;
 
-use common\components\module\CmsModule;
+use Besnovatyj\Kernel\module\CmsModule;
 use Besnovatyj\Contracts\module\DeclaresModule;
 use Besnovatyj\Contracts\module\ProvidesAdminMenu;
 use Besnovatyj\Contracts\module\ProvidesOptions;
