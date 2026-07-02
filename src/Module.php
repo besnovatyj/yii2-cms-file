@@ -7,9 +7,9 @@
 namespace Besnovatyj\File;
 
 use common\components\module\CmsModule;
-use modules\modman\contract\DeclaresModule;
-use modules\modman\contract\ProvidesAdminMenu;
-use modules\modman\contract\ProvidesOptions;
+use Besnovatyj\Contracts\module\DeclaresModule;
+use Besnovatyj\Contracts\module\ProvidesAdminMenu;
+use Besnovatyj\Contracts\module\ProvidesOptions;
 
 class Module extends CmsModule implements
     DeclaresModule, ProvidesAdminMenu,
