@@ -43,6 +43,7 @@
     "league/flysystem-aws-s3-v3": "^3.0",
     "league/flysystem-ziparchive": "^3.0",
     "besnovatyj/yii2-cms-ckeditor5": "^1.0",
+    "besnovatyj/yii2-cms-editor": "^1.0",
     "besnovatyj/yii2-cms-file-manager": "^1.0",
     "besnovatyj/ckeditor5-filemanager": "^1.0",
     "besnovatyj/ckeditor5-codemirror": "^1.0"
