@@ -13,7 +13,10 @@
   "extra": {
     "moduleClass": "Besnovatyj\\File\\Module",
     "moduleId": "File",
-    "bescms": { "kind": "module" }
+    "bescms": { "kind": "module" },
+    "config-plugin": {
+      "common": "src/config/common.php"
+    }
   },
   "keywords": [
     "yii2",
