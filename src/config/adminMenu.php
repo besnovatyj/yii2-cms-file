@@ -4,7 +4,7 @@
  * Copyright (c) 2026 Besnovatyj. Licensed under the MIT License.
  */
 
-return [
+return [[
     'label' => 'Files',
     'iconClass' => 'bi bi-folder2 me-1',
     'url' => ['/File/backend/file/index'],
@@ -22,4 +22,4 @@ return [
             ],
         ],
     ],
-];
+]];
