@@ -99,4 +99,11 @@ return static function (Container $container): void {
     $container->setSingleton(StorageManager::class, static function (Container $c): StorageManager {
         return new StorageManager($c->get(MountRegistry::class), $c->get(UploadPolicy::class));
     });
+
+    // ====================================================================================
+    // Файловый менеджер v2 (контракт bescms-fs): домен src/fs + протокол src/api.
+    // Параллельная линия: свои классы и DI-ключи, старые регистрации выше не затронуты.
+    // Настройки — params.fs модуля (см. config/config.php), секции s3/upload — общие с v1.
+    // ====================================================================================
+    (require __DIR__ . '/container.fs.php')($container);
 };
