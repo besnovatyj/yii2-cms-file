@@ -8,7 +8,9 @@ declare(strict_types=1);
 
 use Besnovatyj\File\api\NodeSerializer;
 use Besnovatyj\File\api\OperationRegistry;
+use Besnovatyj\File\api\operations\ArchiveOperation;
 use Besnovatyj\File\api\operations\ContentOperation;
+use Besnovatyj\File\api\operations\ExtractOperation;
 use Besnovatyj\File\api\operations\CopyOperation;
 use Besnovatyj\File\api\operations\DeleteOperation;
 use Besnovatyj\File\api\operations\DescribeOperation;
@@ -298,6 +300,8 @@ return static function (Container $container): void {
             DownloadOperation::class,
             PreviewOperation::class,
             SearchOperation::class,
+            ArchiveOperation::class,
+            ExtractOperation::class,
             // Новая операция контракта — ещё один класс в этом списке.
         ] as $operationClass) {
             $registry->register($c->get($operationClass));

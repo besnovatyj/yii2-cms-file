@@ -36,7 +36,7 @@ src/config/container.fs.php                 DI-проводка v2 (подклю
 | `policy.allowedExtensions` | `null` | белый список для upload/rename |
 | `policy.maxFileSize` | `null` (ini PHP) | байт |
 | `policy.contentSniff` | `false` | `true` — отклонять исполняемое содержимое; `'strict'` — плюс сверка с расширением |
-| `limits` | `[]` | `listPageSize`, `maxBatchItems`, `contentMaxBytes`, `maxTransferEntries`, `imageProbeMaxBytes`, `previewMaxBytes`, `searchMaxResults` (500), `searchMaxEntries` (50 000 — бюджет обхода одного поиска) |
+| `limits` | `[]` | `listPageSize`, `maxBatchItems`, `contentMaxBytes`, `maxTransferEntries`, `imageProbeMaxBytes`, `previewMaxBytes`, `searchMaxResults` (500), `searchMaxEntries` (50 000 — бюджет обхода одного поиска), `archiveMaxBytes` (2 ГиБ несжатых данных на сборку/распаковку ZIP) |
 | `tus` | включено | `enabled`, `dir`, `chunkSize`, `threshold`, `ttl` — см. UPLOAD-TUS.md |
 | `thumbnails` | включено | `enabled`, `dir` (`@runtime/fs-thumbs`), `sizes` (`[64,128,256,512]`), `quality`, `maxPixels`, `ttl` — миниатюры для плитки/значков (контракт §9.14); операция появляется только при наличии `ext-imagick` или `ext-gd` |
 
@@ -46,7 +46,7 @@ src/config/container.fs.php                 DI-проводка v2 (подклю
 
 Каждая операция — отдельный маршрут. Минимальный набор для чтения: `describe`, `list`, `tree`,
 `stat`, `content`, `download`, `preview`, `thumbnail`, `search`. Для редактирования: `mkdir`, `rename`, `move`, `copy`, `delete`,
-`upload`. Для докачки: `/File/backend/tus/create`, `/File/backend/tus/upload`,
+`upload`, `archive`, `extract`. Для докачки: `/File/backend/tus/create`, `/File/backend/tus/upload`,
 `/File/backend/api/upload-finalize`. `describe` показывает клиенту только разрешённые операции.
 
 ## Область видимости (scope)
@@ -59,7 +59,7 @@ src/config/container.fs.php                 DI-проводка v2 (подклю
 
 ## Требования к окружению
 
-- PHP ≥ 8.4, `ext-fileinfo`, `ext-mbstring`, `ext-zip`; `ext-intl` желательно (NFC-нормализация имён).
+- PHP ≥ 8.4, `ext-fileinfo`, `ext-mbstring`, `ext-zip` (ZIP-mount и операции archive/extract; временные файлы — в системном tmp); `ext-intl` желательно (NFC-нормализация имён).
 - nginx `client_max_body_size` и PHP `post_max_size` ≥ `tus.chunkSize` (5 МБ).
 - `ext-imagick` (предпочтительно) или `ext-gd` — для миниатюр; `ext-exif` — чтобы миниатюры учитывали ориентацию снимков.
 - cron: `php yii File/tus/purge` раз в час; `php yii File/thumbnail/purge` раз в сутки.

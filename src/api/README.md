@@ -21,7 +21,7 @@
 | `NodeSerializer.php` | `Node`/`Listing`/`OperationReport` → JSON-структуры контракта |
 | `OperationInterface.php`, `OperationRegistry.php` | контракт операции и реестр |
 | `StreamResult.php` | результат потоковой операции (`download`) |
-| `operations/*` | по классу на операцию: `describe`, `list`, `tree`, `stat`, `content`, `mkdir`, `rename`, `move`, `copy`, `delete`, `upload`, `download`, `preview` (inline-изображения для предпросмотра), `upload-finalize` (tus; регистрируется только при `params.fs.tus.enabled`), `thumbnail` (GET-миниатюры; регистрируется только при `params.fs.thumbnails.enabled` и наличии Imagick/GD), `search` (поиск по именам обходом поддерева с бюджетами) |
+| `operations/*` | по классу на операцию: `describe`, `list`, `tree`, `stat`, `content`, `mkdir`, `rename`, `move`, `copy`, `delete`, `upload`, `download`, `preview` (inline-изображения для предпросмотра), `upload-finalize` (tus; регистрируется только при `params.fs.tus.enabled`), `thumbnail` (GET-миниатюры; регистрируется только при `params.fs.thumbnails.enabled` и наличии Imagick/GD), `search` (поиск по именам обходом поддерева с бюджетами), `archive`/`extract` (ZIP через `fs/archive/Archiver`) |
 
 ## Поток запроса
 

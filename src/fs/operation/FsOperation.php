@@ -27,6 +27,8 @@ enum FsOperation: string
     case Preview = 'preview';
     case Thumbnail = 'thumbnail';
     case Search = 'search';
+    case Archive = 'archive';
+    case Extract = 'extract';
     case Mkdir = 'mkdir';
     case Rename = 'rename';
     case Move = 'move';

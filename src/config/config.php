@@ -58,7 +58,8 @@ return [
 
             // Количественные лимиты (fs\FsLimits::fromArray): listPageSize, maxBatchItems,
             // contentMaxBytes, maxTransferEntries, imageProbeMaxBytes, previewMaxBytes,
-            // searchMaxResults (500), searchMaxEntries (50000 — бюджет обхода одного поиска).
+            // searchMaxResults (500), searchMaxEntries (50000 — бюджет обхода одного поиска),
+            // archiveMaxBytes (2 ГиБ несжатых данных на сборку/распаковку ZIP).
             'limits' => [],
 
             // Серверные миниатюры для режимов «плитка»/«значки» (fs\thumbnail\ThumbnailConfig).

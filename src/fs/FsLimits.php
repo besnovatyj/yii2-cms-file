@@ -23,6 +23,7 @@ final class FsLimits
      * @param int $previewMaxBytes Максимальный размер файла для inline-предпросмотра (`preview`).
      * @param int $searchMaxResults Максимум результатов одного поиска (`search`).
      * @param int $searchMaxEntries Максимум записей хранилища, просматриваемых одним поиском (бюджет обхода).
+     * @param int $archiveMaxBytes Максимум несжатых байт при сборке/распаковке архива (защита от zip-бомб и долгих запросов).
      */
     public function __construct(
         public readonly int $listPageSize = 2000,
@@ -33,6 +34,7 @@ final class FsLimits
         public readonly int $previewMaxBytes = 20_971_520,
         public readonly int $searchMaxResults = 500,
         public readonly int $searchMaxEntries = 50_000,
+        public readonly int $archiveMaxBytes = 2_147_483_648,
     ) {
     }
 
@@ -51,6 +53,7 @@ final class FsLimits
             previewMaxBytes: max(0, (int)($config['previewMaxBytes'] ?? $d->previewMaxBytes)),
             searchMaxResults: max(1, (int)($config['searchMaxResults'] ?? $d->searchMaxResults)),
             searchMaxEntries: max(1, (int)($config['searchMaxEntries'] ?? $d->searchMaxEntries)),
+            archiveMaxBytes: max(1, (int)($config['archiveMaxBytes'] ?? $d->archiveMaxBytes)),
         );
     }
 
@@ -63,6 +66,7 @@ final class FsLimits
             'contentMaxBytes' => $this->contentMaxBytes,
             'previewMaxBytes' => $this->previewMaxBytes,
             'searchMaxResults' => $this->searchMaxResults,
+            'archiveMaxBytes' => $this->archiveMaxBytes,
         ];
     }
 }

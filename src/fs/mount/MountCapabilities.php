@@ -104,6 +104,9 @@ final class MountCapabilities
             FsOperation::Download, FsOperation::Preview => $this->download,
             FsOperation::Thumbnail => $this->thumbnail && $this->download,
             FsOperation::Search => $this->search && $this->list,
+            // Архив кладётся как загрузка; распаковка создаёт папки и файлы.
+            FsOperation::Archive => $this->upload,
+            FsOperation::Extract => $this->upload && $this->mkdir,
             FsOperation::Mkdir => $this->mkdir,
             FsOperation::Rename => $this->rename,
             FsOperation::Move => $this->move,

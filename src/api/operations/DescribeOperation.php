@@ -98,7 +98,7 @@ final class DescribeOperation implements OperationInterface
                 'thumbnails' => isset($operations['thumbnail']),
                 'search' => isset($operations['search']),
                 'write' => false,
-                'archive' => false,
+                'archive' => isset($operations['archive']) && isset($operations['extract']),
             ],
             'limits' => $this->limits->toArray(),
             'thumbnails' => isset($operations['thumbnail']) ? $this->thumbnails->toArray() : null,
