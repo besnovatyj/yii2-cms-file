@@ -66,11 +66,22 @@ return [
     's3_path_style' => [
         'path' => 'modules.File.params.s3.usePathStyle',
         'label' => 'AWS S3: Path-style endpoint',
-        'description' => 'Path-style адресация (нужна для MinIO и части S3-совместимых). 1 — включить, 0 — выключить.',
+        'description' => 'Как адресуется бакет в запросах к хранилищу: path-style (https://endpoint/bucket/key) '
+            . 'требуют MinIO и часть S3-совместимых, настоящий AWS работает по virtual-hosted '
+            . '(https://bucket.example.com/key). Не задано — то же, что выключено: пока S3 не подключён, '
+            . 'выбирать нечего.',
         'group' => 'AWS S3',
         'category' => 'File',
+        // boolean пропускает незаполненное значение (skipOnEmpty), поэтому «не задано» сохраняется без ошибки
         'rules' => [['boolean']],
-        'inputOptions' => ['type' => 'input'],
+        'inputOptions' => [
+            'type' => 'dropdown',
+            'items' => [
+                '' => 'Не задано',
+                1 => 'Включена (path-style — MinIO, S3-совместимые)',
+                0 => 'Выключена (virtual-hosted — AWS)',
+            ],
+        ],
     ],
     's3_base_url' => [
         'path' => 'modules.File.params.s3.baseUrl',
