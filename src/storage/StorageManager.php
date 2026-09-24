@@ -44,12 +44,6 @@ final class StorageManager
         return new FileManagerService($this->registry->get($mountId), $this->uploadPolicy);
     }
 
-    /** Сервис точки монтирования по умолчанию (для mount-независимых операций: sua). */
-    public function defaultService(): FileManagerService
-    {
-        return new FileManagerService($this->registry->getDefault(), $this->uploadPolicy);
-    }
-
     /**
      * Конфигурация/возможности бэкенда — контракт GetConfigResponse (ports.ts фронтенда):
      * contractVersion + global (дефолты) + переопределения по mountId.

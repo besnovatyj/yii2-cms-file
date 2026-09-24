@@ -416,20 +416,6 @@ class FileManagerService
     // Конфиг/возможности бэкенда собирает StorageManager::configDto() — он знает обо ВСЕХ
     // точках монтирования (контракт GetConfigResponse: global + переопределения по mount).
 
-    /**
-     * TODO - Заглушка, реализовать
-     * Обработчик загрузки через 'Simple Upload Adapter'.
-     * При реализации ОБЯЗАН пройти ту же {@see UploadPolicy} ($this->policy), что и uploadFile().
-     */
-    public function sua(mixed $post): array
-    {
-        if (true) {
-            return ['url' => 'https://ckeditor.com/docs/ckeditor5/latest/assets/img/volcano_2x.jpg'];
-        } else {
-            throw new DomainException('The image upload failed because the image was too big (max 1.5MB).');
-        }
-    }
-
     // ======= ХЕЛПЕРЫ =======
 
     /**
